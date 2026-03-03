@@ -1,0 +1,21 @@
+# Rust build artifacts
+/target/
+
+# Runtime state (never commit)
+/var/lib/imparando/
+/run/imparando/
+
+# Editor and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets (belt-and-suspenders)
+.env
+.env.*
+*.pem
+*.key
+id_rsa
+id_ed25519

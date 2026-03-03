@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Imparando</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.8.0/lib/addon-fit.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0d1117;
+      --bg-card:     #161b22;
+      --bg-input:    #0d1117;
+      --bg-modal:    #161b22;
+      --border:      #30363d;
+      --text:        #e6edf3;
+      --text-muted:  #8b949e;
+      --accent:      #58a6ff;
+      --accent-hover:#79c0ff;
+      --btn-primary: #238636;
+      --btn-primary-hover: #2ea043;
+      --btn-danger:  #da3633;
+      --btn-danger-hover: #f85149;
+      --btn-neutral: #21262d;
+      --btn-neutral-hover: #30363d;
+      --badge-creating:  #6e7681;
+      --badge-starting:  #d29922;
+      --badge-running:   #3fb950;
+      --badge-stopping:  #e3b341;
+      --badge-stopped:   #6e7681;
+      --badge-failed:    #f85149;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-hover); text-decoration: underline; }
+
+    /* ── Layout ── */
+    #app { height: 100%; display: flex; flex-direction: column; }
+
+    /* ── Views ── */
+    .view { display: none; flex: 1; flex-direction: column; }
+    .view.active { display: flex; }
+
+    /* ── Dashboard ── */
+    #dashboard-view {
+      overflow-y: auto;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 24px;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .topbar-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .content {
+      max-width: 960px;
+      margin: 0 auto;
+      width: 100%;
+      padding: 24px 16px;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+      white-space: nowrap;
+      background: var(--btn-neutral);
+      color: var(--text);
+    }
+    .btn:hover { background: var(--btn-neutral-hover); }
+
+    .btn-primary {
+      background: var(--btn-primary);
+      border-color: var(--btn-primary);
+      color: #fff;
+    }
+    .btn-primary:hover { background: var(--btn-primary-hover); border-color: var(--btn-primary-hover); }
+
+    .btn-danger {
+      background: transparent;
+      border-color: var(--border);
+      color: var(--btn-danger);
+    }
+    .btn-danger:hover { background: var(--btn-danger); border-color: var(--btn-danger); color: #fff; }
+
+    .btn-sm {
+      padding: 4px 10px;
+      font-size: 12px;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* ── Session cards ── */
+    .sessions-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .sessions-header h2 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .session-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .session-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .session-card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .session-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .badge-creating  { background: var(--badge-creating);  color: #fff; }
+    .badge-starting  { background: var(--badge-starting);  color: #000; }
+    .badge-running   { background: var(--badge-running);   color: #000; }
+    .badge-stopping  { background: var(--badge-stopping);  color: #000; }
+    .badge-stopped   { background: var(--badge-stopped);   color: #fff; }
+    .badge-failed    { background: var(--badge-failed);    color: #fff; }
+    .badge-unknown   { background: var(--badge-stopped);   color: #fff; }
+
+    .session-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .session-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .session-meta span { display: flex; align-items: center; gap: 4px; }
+
+    .session-repos {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .repo-chip {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+    }
+    .empty-state p { margin-bottom: 16px; font-size: 15px; }
+
+    /* ── Modal ── */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-backdrop.open { display: flex; }
+
+    .modal {
+      background: var(--bg-modal);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      width: 100%;
+      max-width: 480px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+
+    .modal-title {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-group label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .form-group input,
+    .form-group textarea,
+    .form-group select {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 13px;
+      padding: 8px 10px;
+      width: 100%;
+      transition: border-color 0.15s;
+      font-family: inherit;
+    }
+
+    .form-group input:focus,
+    .form-group textarea:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .form-group textarea {
+      resize: vertical;
+      min-height: 80px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    }
+
+    .form-group select option { background: var(--bg-card); }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .checkbox-group input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .form-error {
+      color: var(--badge-failed);
+      font-size: 12px;
+      min-height: 18px;
+    }
+
+    /* ── Terminal view ── */
+    #terminal-view {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .terminal-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .terminal-topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .terminal-session-name {
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    #terminal-container {
+      flex: 1;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #terminal-container .xterm {
+      height: 100%;
+    }
+
+    /* ── Spinner ── */
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Toasts ── */
+    #toast-container {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .toast {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 13px;
+      color: var(--text);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      animation: slide-in 0.2s ease;
+      pointer-events: auto;
+      max-width: 300px;
+    }
+    .toast.error { border-color: var(--badge-failed); color: var(--badge-failed); }
+    .toast.success { border-color: var(--badge-running); }
+
+    @keyframes slide-in {
+      from { transform: translateX(20px); opacity: 0; }
+      to   { transform: translateX(0);    opacity: 1; }
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      .topbar { padding: 10px 12px; }
+      .content { padding: 16px 12px; }
+      .session-card { padding: 12px; }
+      .form-row { grid-template-columns: 1fr; }
+      .modal { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+<!-- Login Overlay -->
+<div id="login-overlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:300;align-items:center;justify-content:center;">
+  <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:32px;width:100%;max-width:360px;display:flex;flex-direction:column;gap:20px;">
+    <div style="font-size:18px;font-weight:600;text-align:center;">Imparando</div>
+    <form id="login-form" autocomplete="on" style="display:flex;flex-direction:column;gap:14px;">
+      <div class="form-group">
+        <label for="login-username">Username</label>
+        <input type="text" id="login-username" name="username" autocomplete="username" required />
+      </div>
+      <div class="form-group">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" name="password" autocomplete="current-password" required />
+      </div>
+      <div class="form-error" id="login-error"></div>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;">Login</button>
+    </form>
+  </div>
+</div>
+
+<div id="app">
+
+  <!-- Dashboard View -->
+  <div id="dashboard-view" class="view">
+    <div class="topbar">
+      <span class="topbar-title">Imparando</span>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="btn btn-primary" id="new-session-btn">+ New Session</button>
+        <button class="btn" id="logout-btn">Logout</button>
+      </div>
+    </div>
+    <div class="content">
+      <div class="sessions-header">
+        <h2>Sessions</h2>
+        <span id="refresh-indicator" style="color:var(--text-muted);font-size:12px;"></span>
+      </div>
+      <div id="session-list" class="session-list">
+        <div class="empty-state">
+          <div class="spinner"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Terminal View -->
+  <div id="terminal-view" class="view">
+    <div class="terminal-topbar">
+      <div class="terminal-topbar-left">
+        <a href="#/" class="btn btn-sm" id="back-btn">← Back</a>
+        <span class="terminal-session-name" id="terminal-session-name">Session</span>
+      </div>
+      <button class="btn btn-sm btn-danger" id="terminal-stop-btn">Stop</button>
+    </div>
+    <div id="terminal-container"></div>
+  </div>
+
+</div>
+
+<!-- New Session Modal -->
+<div class="modal-backdrop" id="new-session-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-title" id="modal-title">New Session</div>
+    <form id="new-session-form" autocomplete="off">
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div class="form-group">
+          <label for="f-name">Session Name</label>
+          <input type="text" id="f-name" placeholder="my-session" required />
+        </div>
+        <div class="form-group">
+          <label for="f-repos">Repositories <span style="color:var(--text-muted);font-weight:400;">(one per line)</span></label>
+          <textarea id="f-repos" placeholder="https://github.com/user/repo"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="f-vcpus">vCPUs</label>
+            <select id="f-vcpus">
+              <option value="1">1</option>
+              <option value="2" selected>2</option>
+              <option value="4">4</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="f-memory">Memory (MB)</label>
+            <select id="f-memory">
+              <option value="512">512 MB</option>
+              <option value="1024" selected>1024 MB</option>
+              <option value="2048">2048 MB</option>
+              <option value="4096">4096 MB</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="checkbox-group">
+            <input type="checkbox" id="f-private-repos" />
+            <label for="f-private-repos">Clone private repositories</label>
+          </div>
+        </div>
+        <div class="form-error" id="form-error"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="modal-cancel-btn">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="modal-submit-btn">Create Session</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── State ──────────────────────────────────────────────────────────────
+  let sessions = [];
+  let refreshTimer = null;
+  let currentSessionId = null;
+  let term = null;
+  let fitAddon = null;
+  let ws = null;
+  let resizeObserver = null;
+
+  // ── Login / Logout ─────────────────────────────────────────────────────
+  document.getElementById('login-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const user = document.getElementById('login-username').value;
+    const pass = document.getElementById('login-password').value;
+    if (!user || !pass) return;
+
+    const b64 = btoa(user + ':' + pass);
+    const errEl = document.getElementById('login-error');
+    const btn = this.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    btn.textContent = 'Logging in…';
+    errEl.textContent = '';
+
+    try {
+      const res = await fetch('/api/sessions', { headers: { 'Authorization': 'Basic ' + b64 } });
+      if (res.status === 401) {
+        errEl.textContent = 'Invalid username or password.';
+        return;
+      }
+      sessionStorage.setItem('imparando_creds', b64);
+      document.getElementById('login-overlay').style.display = 'none';
+      document.getElementById('app').style.display = '';
+      onRouteChange();
+    } catch (_) {
+      errEl.textContent = 'Could not reach server.';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Login';
+    }
+  });
+
+  document.getElementById('logout-btn').addEventListener('click', function () {
+    sessionStorage.removeItem('imparando_creds');
+    showLoginOverlay();
+  });
+
+  function showLoginOverlay(msg) {
+    stopAutoRefresh();
+    teardownTerminal();
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('login-overlay').style.display = 'flex';
+    document.getElementById('login-error').textContent = msg || '';
+  }
+
+  // ── Toast ──────────────────────────────────────────────────────────────
+  function showToast(msg, type = '') {
+    const el = document.createElement('div');
+    el.className = 'toast' + (type ? ' ' + type : '');
+    el.textContent = msg;
+    document.getElementById('toast-container').appendChild(el);
+    setTimeout(() => el.remove(), 3500);
+  }
+
+  // ── Routing ────────────────────────────────────────────────────────────
+  function getRoute() {
+    const hash = location.hash || '#/';
+    const sessionMatch = hash.match(/^#\/session\/([0-9a-f-]+)$/i);
+    if (sessionMatch) return { view: 'session', id: sessionMatch[1] };
+    return { view: 'dashboard' };
+  }
+
+  function navigate(path) {
+    location.hash = path;
+  }
+
+  window.addEventListener('hashchange', onRouteChange);
+
+  function onRouteChange() {
+    const route = getRoute();
+    if (route.view === 'session') {
+      showTerminalView(route.id);
+    } else {
+      showDashboardView();
+    }
+  }
+
+  // ── View switching ─────────────────────────────────────────────────────
+  function showDashboardView() {
+    document.getElementById('dashboard-view').classList.add('active');
+    document.getElementById('terminal-view').classList.remove('active');
+    teardownTerminal();
+    startAutoRefresh();
+    loadSessions();
+  }
+
+  function showTerminalView(sessionId) {
+    document.getElementById('terminal-view').classList.add('active');
+    document.getElementById('dashboard-view').classList.remove('active');
+    stopAutoRefresh();
+
+    currentSessionId = sessionId;
+
+    // Find session name if we have it
+    const session = sessions.find(s => s.id === sessionId);
+    document.getElementById('terminal-session-name').textContent =
+      session ? session.name : sessionId;
+
+    document.getElementById('terminal-stop-btn').onclick = () => stopSession(sessionId);
+
+    setupTerminal(sessionId);
+  }
+
+  // ── Auth helpers ───────────────────────────────────────────────────────
+  function getAuthHeader() {
+    return 'Basic ' + sessionStorage.getItem('imparando_creds');
+  }
+
+  function handleUnauthorized() {
+    showLoginOverlay('Session expired. Please log in again.');
+  }
+
+  // ── API helpers ────────────────────────────────────────────────────────
+  async function apiFetch(path, opts = {}) {
+    const res = await fetch(path, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': getAuthHeader(),
+        ...(opts.headers || {}),
+      },
+      ...opts,
+    });
+    if (res.status === 401) {
+      handleUnauthorized();
+      throw new Error('Unauthorized');
+    }
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const j = await res.json(); msg = j.error || j.message || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('application/json')) return res.json();
+    return null;
+  }
+
+  // ── Sessions ───────────────────────────────────────────────────────────
+  async function loadSessions() {
+    try {
+      sessions = await apiFetch('/api/sessions');
+      renderSessions();
+    } catch (e) {
+      document.getElementById('session-list').innerHTML =
+        `<div class="empty-state" style="color:var(--badge-failed)">Failed to load sessions: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  function startAutoRefresh() {
+    stopAutoRefresh();
+    refreshTimer = setInterval(() => {
+      const indicator = document.getElementById('refresh-indicator');
+      if (indicator) indicator.textContent = 'Refreshing…';
+      loadSessions().then(() => {
+        if (indicator) indicator.textContent = '';
+      });
+    }, 5000);
+  }
+
+  function stopAutoRefresh() {
+    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function badgeClass(status) {
+    const map = {
+      creating: 'badge-creating',
+      starting: 'badge-starting',
+      running:  'badge-running',
+      stopping: 'badge-stopping',
+      stopped:  'badge-stopped',
+      failed:   'badge-failed',
+    };
+    return map[status] || 'badge-unknown';
+  }
+
+  function formatUptime(createdAt) {
+    if (!createdAt) return '';
+    const diffMs = Date.now() - new Date(createdAt).getTime();
+    if (isNaN(diffMs) || diffMs < 0) return '';
+    const totalSec = Math.floor(diffMs / 1000);
+    const d = Math.floor(totalSec / 86400);
+    const h = Math.floor((totalSec % 86400) / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  }
+
+  function renderSessions() {
+    const container = document.getElementById('session-list');
+    if (!sessions || sessions.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <p>No sessions yet.</p>
+          <button class="btn btn-primary" onclick="document.getElementById('new-session-btn').click()">Create your first session</button>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = sessions.map(s => {
+      const repos = Array.isArray(s.repos) ? s.repos : [];
+      const repoChips = repos.map(r =>
+        `<span class="repo-chip">${escHtml(r.replace(/^https?:\/\/(www\.)?github\.com\//, ''))}</span>`
+      ).join('');
+
+      const canOpen   = s.status === 'running';
+      const canStop   = ['running', 'starting', 'creating'].includes(s.status);
+      const canDelete = ['stopped', 'failed'].includes(s.status);
+
+      return `
+        <div class="session-card" data-id="${escHtml(s.id)}">
+          <div class="session-card-top">
+            <div class="session-name">
+              ${escHtml(s.name)}
+              <span class="badge ${badgeClass(s.status)}">${escHtml(s.status || 'unknown')}</span>
+            </div>
+            <div class="session-actions">
+              <button class="btn btn-sm"
+                onclick="openSession('${escHtml(s.id)}')"
+                ${canOpen ? '' : 'disabled'}>Open</button>
+              <button class="btn btn-sm"
+                onclick="stopSession('${escHtml(s.id)}')"
+                ${canStop ? '' : 'disabled'}>Stop</button>
+              <button class="btn btn-sm btn-danger"
+                onclick="deleteSession('${escHtml(s.id)}')"
+                ${canDelete ? '' : 'disabled'}>Delete</button>
+            </div>
+          </div>
+          <div class="session-meta">
+            <span>&#9000; ${escHtml(String(s.vcpus ?? '?'))} vCPU</span>
+            <span>&#11052; ${escHtml(String(s.memory_mb ?? '?'))} MB</span>
+            ${s.created_at ? `<span>&#9202; ${escHtml(formatUptime(s.created_at))}</span>` : ''}
+          </div>
+          ${repos.length > 0 ? `<div class="session-repos">${repoChips}</div>` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  // ── Session actions ────────────────────────────────────────────────────
+  window.openSession = function (id) {
+    navigate(`#/session/${id}`);
+  };
+
+  window.stopSession = async function (id) {
+    try {
+      await apiFetch(`/api/sessions/${id}/stop`, { method: 'PUT' });
+      showToast('Session stop requested.', 'success');
+      await loadSessions();
+    } catch (e) {
+      showToast('Failed to stop session: ' + e.message, 'error');
+    }
+  };
+
+  window.deleteSession = async function (id) {
+    if (!confirm('Delete this session? This cannot be undone.')) return;
+    try {
+      await apiFetch(`/api/sessions/${id}`, { method: 'DELETE' });
+      showToast('Session deleted.', 'success');
+      await loadSessions();
+    } catch (e) {
+      showToast('Failed to delete session: ' + e.message, 'error');
+    }
+  };
+
+  // ── New Session modal ──────────────────────────────────────────────────
+  document.getElementById('new-session-btn').addEventListener('click', openModal);
+  document.getElementById('modal-cancel-btn').addEventListener('click', closeModal);
+  document.getElementById('new-session-modal').addEventListener('click', function (e) {
+    if (e.target === this) closeModal();
+  });
+
+  function openModal() {
+    document.getElementById('new-session-form').reset();
+    document.getElementById('form-error').textContent = '';
+    document.getElementById('new-session-modal').classList.add('open');
+    document.getElementById('f-name').focus();
+  }
+
+  function closeModal() {
+    document.getElementById('new-session-modal').classList.remove('open');
+  }
+
+  document.getElementById('new-session-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const errEl = document.getElementById('form-error');
+    errEl.textContent = '';
+
+    const name = document.getElementById('f-name').value.trim();
+    const reposRaw = document.getElementById('f-repos').value.trim();
+    const vcpus = parseInt(document.getElementById('f-vcpus').value, 10);
+    const memory_mb = parseInt(document.getElementById('f-memory').value, 10);
+    const private_repos = document.getElementById('f-private-repos').checked;
+
+    if (!name) { errEl.textContent = 'Name is required.'; return; }
+
+    const repos = reposRaw
+      ? reposRaw.split('\n').map(r => r.trim()).filter(Boolean)
+      : [];
+
+    const submitBtn = document.getElementById('modal-submit-btn');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating…';
+
+    try {
+      await apiFetch('/api/sessions', {
+        method: 'POST',
+        body: JSON.stringify({ name, repos, vcpus, memory_mb, private_repos }),
+      });
+      closeModal();
+      showToast('Session created!', 'success');
+      await loadSessions();
+    } catch (e) {
+      errEl.textContent = e.message;
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Create Session';
+    }
+  });
+
+  // ── Terminal ───────────────────────────────────────────────────────────
+  function setupTerminal(sessionId) {
+    teardownTerminal();
+
+    const container = document.getElementById('terminal-container');
+    container.innerHTML = '';
+
+    term = new Terminal({
+      theme: {
+        background: '#0d1117',
+        foreground: '#e6edf3',
+        cursor:     '#e6edf3',
+        selectionBackground: 'rgba(88, 166, 255, 0.3)',
+        black:   '#0d1117',
+        red:     '#f85149',
+        green:   '#3fb950',
+        yellow:  '#d29922',
+        blue:    '#58a6ff',
+        magenta: '#bc8cff',
+        cyan:    '#39c5cf',
+        white:   '#b1bac4',
+        brightBlack:   '#6e7681',
+        brightRed:     '#ff7b72',
+        brightGreen:   '#56d364',
+        brightYellow:  '#e3b341',
+        brightBlue:    '#79c0ff',
+        brightMagenta: '#d2a8ff',
+        brightCyan:    '#56d4dd',
+        brightWhite:   '#f0f6fc',
+      },
+      fontFamily: 'ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace',
+      fontSize: 14,
+      lineHeight: 1.2,
+      cursorBlink: true,
+      scrollback: 5000,
+      allowTransparency: false,
+    });
+
+    fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(container);
+    fitAddon.fit();
+
+    connectWebSocket(sessionId);
+
+    // Resize observer
+    resizeObserver = new ResizeObserver(() => {
+      fitAddon.fit();
+      sendResize();
+    });
+    resizeObserver.observe(container);
+
+    // Keyboard input → binary WS message
+    term.onData(data => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const encoder = new TextEncoder();
+        ws.send(encoder.encode(data));
+      }
+    });
+  }
+
+  function connectWebSocket(sessionId) {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const creds = sessionStorage.getItem('imparando_creds');
+    const userpass = atob(creds); // decode to "user:pass"
+    const url = `${proto}://${encodeURIComponent(userpass)}@${location.host}/api/sessions/${sessionId}/terminal`;
+    ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      sendResize();
+      term.write('\r\n\x1b[32mConnected.\x1b[0m\r\n');
+    };
+
+    ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        const decoder = new TextDecoder();
+        term.write(decoder.decode(event.data));
+      } else {
+        term.write(event.data);
+      }
+    };
+
+    ws.onclose = (event) => {
+      term.write(`\r\n\x1b[33mConnection closed (${event.code}).\x1b[0m\r\n`);
+    };
+
+    ws.onerror = () => {
+      term.write('\r\n\x1b[31mWebSocket error.\x1b[0m\r\n');
+    };
+  }
+
+  function sendResize() {
+    if (!term || !ws || ws.readyState !== WebSocket.OPEN) return;
+    const msg = JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows });
+    ws.send(msg);
+  }
+
+  function teardownTerminal() {
+    if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
+    if (ws) { ws.close(); ws = null; }
+    if (term) { term.dispose(); term = null; }
+    fitAddon = null;
+    currentSessionId = null;
+    document.getElementById('terminal-container').innerHTML = '';
+  }
+
+  // ── Back button ────────────────────────────────────────────────────────
+  document.getElementById('back-btn').addEventListener('click', (e) => {
+    e.preventDefault();
+    navigate('#/');
+  });
+
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const modal = document.getElementById('new-session-modal');
+      if (modal.classList.contains('open')) closeModal();
+    }
+  });
+
+  // ── Boot ───────────────────────────────────────────────────────────────
+  if (sessionStorage.getItem('imparando_creds')) {
+    document.getElementById('login-overlay').style.display = 'none';
+    onRouteChange();
+  } else {
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('login-overlay').style.display = 'flex';
+  }
+
+})();
+</script>
+</body>
+</html>
