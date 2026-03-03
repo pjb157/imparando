@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::path::Path;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 pub struct FirecrackerClient {
@@ -50,37 +50,55 @@ impl FirecrackerClient {
     ) -> Result<(u16, String)> {
         let mut stream = UnixStream::connect(&self.socket_path).await?;
 
-        // HTTP/1.0: server closes connection after each response, so read_to_end
-        // reliably returns as soon as the full response is received.
+        // Write the full request before doing any reading.
+        // Firecracker uses HTTP/1.1 keep-alive, so we must parse by Content-Length
+        // rather than reading until EOF (which would block forever).
         let request = match body {
             Some(b) => format!(
-                "{method} {path} HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccept: */*\r\n\r\n{b}",
+                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccept: */*\r\n\r\n{b}",
                 b.len()
             ),
             None => format!(
-                "{method} {path} HTTP/1.0\r\nHost: localhost\r\nAccept: */*\r\n\r\n"
+                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nAccept: */*\r\n\r\n"
             ),
         };
         stream.write_all(request.as_bytes()).await?;
 
-        let mut response = Vec::new();
-        stream.read_to_end(&mut response).await?;
+        // Wrap in BufReader only after writing — this avoids splitting the stream,
+        // which could cause the write to buffer and never be flushed before we read.
+        let mut reader = BufReader::new(stream);
 
-        let response_str = String::from_utf8_lossy(&response);
-        let status = response_str
-            .lines()
-            .next()
-            .and_then(|l| l.split_whitespace().nth(1))
+        // Parse status line
+        let mut status_line = String::new();
+        reader.read_line(&mut status_line).await?;
+        let status = status_line
+            .split_whitespace()
+            .nth(1)
             .and_then(|s| s.parse::<u16>().ok())
             .unwrap_or(0);
 
-        let body_start = response_str
-            .find("\r\n\r\n")
-            .map(|i| i + 4)
-            .unwrap_or(response_str.len());
-        let resp_body = response_str[body_start..].to_string();
+        // Read headers, extract Content-Length.
+        // 204/304/1xx have no body and often no Content-Length — default to 0.
+        let mut content_length: usize = 0;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).await?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                break;
+            }
+            if let Some(val) = trimmed.to_lowercase().strip_prefix("content-length:") {
+                content_length = val.trim().parse().unwrap_or(0);
+            }
+        }
 
-        Ok((status, resp_body))
+        // Read exactly Content-Length bytes (0 for 204 No Content, etc.)
+        let mut body_bytes = vec![0u8; content_length];
+        if content_length > 0 {
+            reader.read_exact(&mut body_bytes).await?;
+        }
+
+        Ok((status, String::from_utf8_lossy(&body_bytes).into_owned()))
     }
 
     async fn put(&self, path: &str, body: &str) -> Result<()> {
