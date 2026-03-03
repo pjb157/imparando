@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::path::Path;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 
 pub struct FirecrackerClient {
@@ -48,51 +48,39 @@ impl FirecrackerClient {
         path: &str,
         body: Option<&str>,
     ) -> Result<(u16, String)> {
-        let stream = UnixStream::connect(&self.socket_path).await?;
-        let (read_half, mut write_half) = stream.into_split();
-        let mut reader = BufReader::new(read_half);
+        let mut stream = UnixStream::connect(&self.socket_path).await?;
 
+        // HTTP/1.0: server closes connection after each response, so read_to_end
+        // reliably returns as soon as the full response is received.
         let request = match body {
             Some(b) => format!(
-                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccept: */*\r\nConnection: close\r\n\r\n{b}",
+                "{method} {path} HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccept: */*\r\n\r\n{b}",
                 b.len()
             ),
             None => format!(
-                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+                "{method} {path} HTTP/1.0\r\nHost: localhost\r\nAccept: */*\r\n\r\n"
             ),
         };
-        write_half.write_all(request.as_bytes()).await?;
+        stream.write_all(request.as_bytes()).await?;
 
-        // Parse status line
-        let mut status_line = String::new();
-        reader.read_line(&mut status_line).await?;
-        let status = status_line
-            .split_whitespace()
-            .nth(1)
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await?;
+
+        let response_str = String::from_utf8_lossy(&response);
+        let status = response_str
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
             .and_then(|s| s.parse::<u16>().ok())
             .unwrap_or(0);
 
-        // Read headers, extract Content-Length
-        let mut content_length: usize = 0;
-        loop {
-            let mut line = String::new();
-            reader.read_line(&mut line).await?;
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                break;
-            }
-            if let Some(val) = trimmed.to_lowercase().strip_prefix("content-length:") {
-                content_length = val.trim().parse().unwrap_or(0);
-            }
-        }
+        let body_start = response_str
+            .find("\r\n\r\n")
+            .map(|i| i + 4)
+            .unwrap_or(response_str.len());
+        let resp_body = response_str[body_start..].to_string();
 
-        // Read exactly Content-Length bytes — no waiting for EOF
-        let mut body_bytes = vec![0u8; content_length];
-        if content_length > 0 {
-            reader.read_exact(&mut body_bytes).await?;
-        }
-
-        Ok((status, String::from_utf8_lossy(&body_bytes).into_owned()))
+        Ok((status, resp_body))
     }
 
     async fn put(&self, path: &str, body: &str) -> Result<()> {
