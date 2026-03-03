@@ -128,7 +128,7 @@ impl FirecrackerClient {
             "/boot-source",
             &serde_json::json!({
                 "kernel_image_path": kernel_path,
-                "boot_args": "console=ttyS0 reboot=k panic=1 pci=off nomodules rw init=/startup.sh"
+                "boot_args": "root=/dev/vda rw console=ttyS0 reboot=k panic=1 pci=off init=/startup.sh net.ifnames=0 biosdevname=0"
             })
             .to_string(),
         )

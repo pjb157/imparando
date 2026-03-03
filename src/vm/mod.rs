@@ -369,17 +369,32 @@ impl SessionManager {
             .await
             .insert(id, VmChannels { output_tx: output_tx.clone(), input_tx });
 
-        // Task: VM stdout → broadcast channel
+        // Task: VM stdout → broadcast channel + console log file
         let output_tx_clone = output_tx.clone();
+        let console_log = run_dir.join("console.log");
         tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
             let mut stdout = child_stdout;
             let mut buf = vec![0u8; 4096];
+            let mut log_file = tokio::fs::File::create(&console_log).await.ok();
             loop {
                 match stdout.read(&mut buf).await {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        let _ = output_tx_clone.send(bytes::Bytes::copy_from_slice(&buf[..n]));
+                        let chunk = bytes::Bytes::copy_from_slice(&buf[..n]);
+                        // Log VM console output to server logs for debugging
+                        if let Ok(text) = std::str::from_utf8(&chunk) {
+                            for line in text.lines() {
+                                let trimmed = line.trim();
+                                if !trimmed.is_empty() {
+                                    tracing::info!(session_id = %id, "[console] {trimmed}");
+                                }
+                            }
+                        }
+                        if let Some(ref mut f) = log_file {
+                            let _ = f.write_all(&chunk).await;
+                        }
+                        let _ = output_tx_clone.send(chunk);
                     }
                 }
             }
