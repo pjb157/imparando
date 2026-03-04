@@ -138,6 +138,7 @@ fn build_startup_script(
     }
 
     lines.push("export TERM=xterm-256color".to_string());
+    lines.push("stty cols 220 rows 50".to_string());
     lines.push("mkdir -p /root/workspace".to_string());
     lines.push("cd /root/workspace".to_string());
     lines.push(String::new());
