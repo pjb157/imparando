@@ -476,7 +476,7 @@
         <a href="#/" class="btn btn-sm" id="back-btn">← Back</a>
         <span class="terminal-session-name" id="terminal-session-name">Session</span>
       </div>
-      <button class="btn btn-sm btn-danger" id="terminal-stop-btn">Stop</button>
+      <button class="btn btn-sm btn-danger" id="terminal-stop-btn">Delete</button>
     </div>
     <div id="terminal-container"></div>
   </div>
@@ -646,7 +646,15 @@
     document.getElementById('terminal-session-name').textContent =
       session ? session.name : sessionId;
 
-    document.getElementById('terminal-stop-btn').onclick = () => stopSession(sessionId);
+    document.getElementById('terminal-stop-btn').onclick = async () => {
+      if (!confirm('Delete this session? This cannot be undone.')) return;
+      try {
+        await apiFetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+        navigate('#/');
+      } catch (e) {
+        showToast('Failed to delete session: ' + e.message, 'error');
+      }
+    };
 
     setupTerminal(sessionId);
   }
@@ -762,9 +770,7 @@
         `<span class="repo-chip">${escHtml(r.replace(/^https?:\/\/(www\.)?github\.com\//, ''))}</span>`
       ).join('');
 
-      const canOpen   = s.status === 'running';
-      const canStop   = ['running', 'starting', 'creating'].includes(s.status);
-      const canDelete = ['stopped', 'failed'].includes(s.status);
+      const canOpen = s.status === 'running';
 
       return `
         <div class="session-card" data-id="${escHtml(s.id)}">
@@ -777,12 +783,8 @@
               <button class="btn btn-sm"
                 onclick="openSession('${escHtml(s.id)}')"
                 ${canOpen ? '' : 'disabled'}>Open</button>
-              <button class="btn btn-sm"
-                onclick="stopSession('${escHtml(s.id)}')"
-                ${canStop ? '' : 'disabled'}>Stop</button>
               <button class="btn btn-sm btn-danger"
-                onclick="deleteSession('${escHtml(s.id)}')"
-                ${canDelete ? '' : 'disabled'}>Delete</button>
+                onclick="deleteSession('${escHtml(s.id)}')">Delete</button>
             </div>
           </div>
           <div class="session-meta">
@@ -939,9 +941,7 @@
 
   function connectWebSocket(sessionId) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const creds = sessionStorage.getItem('imparando_creds');
-    const userpass = atob(creds); // decode to "user:pass"
-    const url = `${proto}://${encodeURIComponent(userpass)}@${location.host}/api/sessions/${sessionId}/terminal`;
+    const url = `${proto}://${location.host}/api/sessions/${sessionId}/terminal`;
     ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
 

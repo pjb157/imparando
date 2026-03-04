@@ -59,6 +59,8 @@ struct VmChannels {
     output_tx: broadcast::Sender<bytes::Bytes>,
     /// Unbounded sender — callers push bytes into VM stdin.
     input_tx: mpsc::UnboundedSender<bytes::Bytes>,
+    /// Rolling buffer of recent VM output, replayed to new WebSocket subscribers.
+    scrollback: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
 }
 
 // ── SessionManager ────────────────────────────────────────────────────────────
@@ -92,13 +94,19 @@ impl SessionManager {
         self.sessions.read().await.get(&id).cloned()
     }
 
-    /// Returns a broadcast receiver for VM stdout and a clone of the stdin sender.
+    /// Returns scrollback history, a broadcast receiver, and a stdin sender.
+    /// Callers should send the scrollback first, then stream from the receiver.
     pub async fn terminal_channels(
         &self,
         id: Uuid,
-    ) -> Option<(broadcast::Receiver<bytes::Bytes>, mpsc::UnboundedSender<bytes::Bytes>)> {
+    ) -> Option<(bytes::Bytes, broadcast::Receiver<bytes::Bytes>, mpsc::UnboundedSender<bytes::Bytes>)> {
         let channels = self.channels.read().await;
-        channels.get(&id).map(|c| (c.output_tx.subscribe(), c.input_tx.clone()))
+        channels.get(&id).map(|c| {
+            // Subscribe before snapshotting so we don't miss messages between the two.
+            let rx = c.output_tx.subscribe();
+            let sb = bytes::Bytes::from(c.scrollback.lock().unwrap().clone());
+            (sb, rx, c.input_tx.clone())
+        })
     }
 
     // ── Session lifecycle ─────────────────────────────────────────────────────
@@ -170,21 +178,28 @@ impl SessionManager {
         Ok(())
     }
 
-    pub async fn delete_session(&self, id: Uuid) -> Result<()> {
+    pub async fn delete_session(self: Arc<Self>, id: Uuid) -> Result<()> {
         let session = self
             .get_session(id).await
             .ok_or_else(|| anyhow::anyhow!("Session {id} not found"))?;
-        match session.status {
-            SessionStatus::Running
-            | SessionStatus::Starting
-            | SessionStatus::Creating
-            | SessionStatus::Stopping => {
-                bail!("Stop the session before deleting it");
-            }
-            _ => {}
-        }
-        self.sessions.write().await.remove(&id);
+
+        let needs_teardown = matches!(
+            session.status,
+            SessionStatus::Running | SessionStatus::Starting | SessionStatus::Creating
+        );
+
+        // Drop channels to disconnect WebSocket clients.
         self.channels.write().await.remove(&id);
+        self.sessions.write().await.remove(&id);
+
+        if needs_teardown {
+            tokio::spawn(async move {
+                if let Err(e) = self.teardown_vm(id).await {
+                    tracing::warn!(session_id = %id, error = %e, "Delete teardown error");
+                }
+            });
+        }
+
         Ok(())
     }
 
@@ -363,13 +378,14 @@ impl SessionManager {
         // 6. Wire up terminal I/O channels
         let (output_tx, _) = broadcast::channel::<bytes::Bytes>(256);
         let (input_tx, input_rx) = mpsc::unbounded_channel::<bytes::Bytes>();
+        let scrollback = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
 
-        self.channels
-            .write()
-            .await
-            .insert(id, VmChannels { output_tx: output_tx.clone(), input_tx });
+        self.channels.write().await.insert(
+            id,
+            VmChannels { output_tx: output_tx.clone(), input_tx, scrollback: scrollback.clone() },
+        );
 
-        // Task: VM stdout → broadcast channel + console log file
+        // Task: VM stdout → scrollback buffer + console log file + broadcast channel
         let output_tx_clone = output_tx.clone();
         let console_log = run_dir.join("console.log");
         tokio::spawn(async move {
@@ -382,13 +398,13 @@ impl SessionManager {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
                         let chunk = bytes::Bytes::copy_from_slice(&buf[..n]);
-                        // Log VM console output to server logs for debugging
-                        if let Ok(text) = std::str::from_utf8(&chunk) {
-                            for line in text.lines() {
-                                let trimmed = line.trim();
-                                if !trimmed.is_empty() {
-                                    tracing::info!(session_id = %id, "[console] {trimmed}");
-                                }
+                        {
+                            let mut sb = scrollback.lock().unwrap();
+                            sb.extend_from_slice(&buf[..n]);
+                            const MAX: usize = 128 * 1024;
+                            if sb.len() > MAX {
+                                let excess = sb.len() - MAX;
+                                sb.drain(..excess);
                             }
                         }
                         if let Some(ref mut f) = log_file {

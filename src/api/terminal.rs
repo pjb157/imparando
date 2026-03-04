@@ -20,7 +20,7 @@ pub async fn terminal_ws(
 
 async fn handle_socket(socket: WebSocket, id: Uuid, manager: SharedSessionManager) {
     let channels = manager.terminal_channels(id).await;
-    let (mut output_rx, input_tx) = match channels {
+    let (scrollback, mut output_rx, input_tx) = match channels {
         Some(c) => c,
         None => {
             tracing::warn!(session_id = %id, "Terminal connect: session not found or not running");
@@ -29,6 +29,11 @@ async fn handle_socket(socket: WebSocket, id: Uuid, manager: SharedSessionManage
     };
 
     let (mut ws_tx, mut ws_rx) = socket.split();
+
+    // Replay scrollback so late subscribers see prior output.
+    if !scrollback.is_empty() {
+        let _ = ws_tx.send(Message::Binary(scrollback.into())).await;
+    }
 
     // Task: VM output → WebSocket
     let send_task = tokio::spawn(async move {
