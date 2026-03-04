@@ -34,13 +34,25 @@ async fn handle_socket(socket: WebSocket, id: Uuid, manager: SharedSessionManage
     let ttyd_url = format!("ws://{}:7681/ws", vm_ip);
     tracing::info!(session_id = %id, url = %ttyd_url, "Connecting to ttyd");
 
-    let ttyd_ws = match connect_ttyd(&ttyd_url, 60).await {
+    let mut ttyd_ws = match connect_ttyd(&ttyd_url, 60).await {
         Ok(ws) => ws,
         Err(e) => {
             tracing::error!(session_id = %id, error = %e, "Failed to connect to ttyd");
             return;
         }
     };
+
+    // ttyd requires an AuthToken message before it starts PTY output.
+    // Even with no auth configured, the client must send {"AuthToken":""}.
+    if let Err(e) = ttyd_ws
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            r#"{"AuthToken":""}"#.into(),
+        ))
+        .await
+    {
+        tracing::error!(session_id = %id, error = %e, "Failed to send ttyd AuthToken");
+        return;
+    }
 
     tracing::info!(session_id = %id, "Proxying terminal to ttyd");
 
