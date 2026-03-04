@@ -51,6 +51,10 @@ pub struct Cli {
     /// Path to the Firecracker binary [default: /usr/local/bin/firecracker]
     #[arg(long)]
     pub firecracker_bin: Option<PathBuf>,
+
+    /// Path to the ttyd binary injected into VMs [default: /var/lib/imparando/ttyd]
+    #[arg(long)]
+    pub ttyd_bin: Option<PathBuf>,
 }
 
 // ── Config file (TOML) ────────────────────────────────────────────────────────
@@ -67,6 +71,7 @@ struct FileConfig {
     anthropic_api_key: Option<String>,
     claude_oauth_token: Option<String>,
     firecracker_bin: Option<PathBuf>,
+    ttyd_bin: Option<PathBuf>,
 }
 
 // ── Resolved config ───────────────────────────────────────────────────────────
@@ -83,6 +88,7 @@ pub struct Config {
     pub kernel_path: PathBuf,
     pub base_rootfs_path: PathBuf,
     pub firecracker_bin: PathBuf,
+    pub ttyd_bin: PathBuf,
     pub anthropic_api_key: Option<String>,
     pub claude_oauth_token: Option<String>,
 }
@@ -141,6 +147,12 @@ impl Config {
                 .or(file.firecracker_bin)
                 .or_else(|| std::env::var("FIRECRACKER_BIN").ok().map(PathBuf::from))
                 .unwrap_or_else(|| PathBuf::from("/usr/local/bin/firecracker")),
+            ttyd_bin: cli
+                .ttyd_bin
+                .clone()
+                .or(file.ttyd_bin)
+                .or_else(|| std::env::var("TTYD_BIN").ok().map(PathBuf::from))
+                .unwrap_or_else(|| data_dir.join("ttyd")),
             anthropic_api_key: cli
                 .anthropic_api_key
                 .clone()

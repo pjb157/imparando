@@ -20,6 +20,7 @@ impl OverlayManager {
     pub async fn create_overlay(
         base_path: &Path,
         overlay_path: &Path,
+        ttyd_bin: &Path,
         repos: &[String],
         ssh_key: Option<&str>,
         vm_ip: &str,
@@ -27,32 +28,32 @@ impl OverlayManager {
         anthropic_api_key: Option<&str>,
         claude_oauth_token: Option<&str>,
     ) -> Result<()> {
-        // Fix 1: Validate all repo URLs before doing anything else
         for repo in repos {
             validate_repo_url(repo)?;
         }
 
-        // Copy base image
         tokio::fs::copy(base_path, overlay_path).await?;
 
-        // Build startup script
         let script = build_startup_script(repos, ssh_key, vm_ip, gw_ip, anthropic_api_key, claude_oauth_token);
 
-        // Mount overlay, write startup script, unmount
         let mount_dir = overlay_path.with_extension("mnt");
         tokio::fs::create_dir_all(&mount_dir).await?;
 
         let mount_dir_str = mount_dir.to_str().unwrap();
         let overlay_str = overlay_path.to_str().unwrap();
 
-        // Mount
         run("mount", &["-o", "loop", overlay_str, mount_dir_str]).await?;
 
-        // Fix 3: Run all writes in a block so we can always unmount even on failure
         let write_result = async {
             // Write startup script
             let script_path = mount_dir.join("startup.sh");
             tokio::fs::write(&script_path, &script).await?;
+
+            // Copy ttyd binary
+            let ttyd_dest = mount_dir.join("usr/local/bin/ttyd");
+            run("mkdir", &["-p", mount_dir.join("usr/local/bin").to_str().unwrap()]).await?;
+            tokio::fs::copy(ttyd_bin, &ttyd_dest).await?;
+            run("chmod", &["+x", ttyd_dest.to_str().unwrap()]).await?;
 
             // Write SSH key if provided
             if let Some(key) = ssh_key {
@@ -74,11 +75,9 @@ gitlab.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAA
         }
         .await;
 
-        // Always unmount, even if writes failed
         let umount_result = run("umount", &[mount_dir_str]).await;
         let _ = tokio::fs::remove_dir(&mount_dir).await;
 
-        // Now propagate errors
         write_result?;
         umount_result?;
 
@@ -99,8 +98,7 @@ fn build_startup_script(
         "#!/bin/bash".to_string(),
         "set -e".to_string(),
         String::new(),
-        "# Mount essential filesystems (running as PID 1 via init=)".to_string(),
-        "# Use || true: kernel may have auto-mounted some of these (CONFIG_DEVTMPFS_MOUNT)".to_string(),
+        "# Mount essential filesystems".to_string(),
         "mount -t proc proc /proc 2>/dev/null || true".to_string(),
         "mount -t sysfs sysfs /sys 2>/dev/null || true".to_string(),
         "mount -t devtmpfs devtmpfs /dev 2>/dev/null || true".to_string(),
@@ -138,7 +136,6 @@ fn build_startup_script(
     }
 
     lines.push("export TERM=xterm-256color".to_string());
-    lines.push("stty cols 220 rows 50".to_string());
     lines.push("mkdir -p /root/workspace".to_string());
     lines.push("cd /root/workspace".to_string());
     lines.push(String::new());
@@ -146,14 +143,13 @@ fn build_startup_script(
     if !repos.is_empty() {
         lines.push("# Clone repositories".to_string());
         for repo in repos {
-            // Fix 1: Single-quote the URL so the shell never re-interprets it
             lines.push(format!("git clone '{repo}'"));
         }
         lines.push(String::new());
     }
 
-    lines.push("# Start Claude Code".to_string());
-    lines.push("exec claude".to_string());
+    lines.push("# Start ttyd — provides a proper PTY for Claude Code".to_string());
+    lines.push("exec ttyd -W claude".to_string());
 
     lines.join("\n")
 }

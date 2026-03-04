@@ -596,6 +596,7 @@ dependencies = [
  "subtle",
  "thiserror",
  "tokio",
+ "tokio-tungstenite",
  "tokio-util",
  "toml",
  "tower 0.4.13",

@@ -930,11 +930,15 @@
     });
     resizeObserver.observe(container);
 
-    // Keyboard input → binary WS message
+    // Keyboard input → ttyd INPUT frame ('0' prefix)
     term.onData(data => {
       if (ws && ws.readyState === WebSocket.OPEN) {
         const encoder = new TextEncoder();
-        ws.send(encoder.encode(data));
+        const encoded = encoder.encode(data);
+        const msg = new Uint8Array(1 + encoded.length);
+        msg[0] = 0x30; // '0' = INPUT
+        msg.set(encoded, 1);
+        ws.send(msg.buffer);
       }
     });
   }
@@ -947,16 +951,18 @@
 
     ws.onopen = () => {
       sendResize();
-      term.write('\r\n\x1b[32mConnected.\x1b[0m\r\n');
     };
 
+    // ttyd binary protocol: first byte is type
+    // 0x30 ('0') = OUTPUT, 0x31 ('1') = SET_WINDOW_TITLE, 0x32 ('2') = SET_PREFERENCES
     ws.onmessage = (event) => {
-      if (event.data instanceof ArrayBuffer) {
-        const decoder = new TextDecoder();
-        term.write(decoder.decode(event.data));
-      } else {
-        term.write(event.data);
+      if (!(event.data instanceof ArrayBuffer)) return;
+      const view = new Uint8Array(event.data);
+      if (view.length === 0) return;
+      if (view[0] === 0x30) { // OUTPUT
+        term.write(view.slice(1));
       }
+      // ignore title (0x31) and prefs (0x32) frames
     };
 
     ws.onclose = (event) => {
@@ -970,8 +976,14 @@
 
   function sendResize() {
     if (!term || !ws || ws.readyState !== WebSocket.OPEN) return;
-    const msg = JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows });
-    ws.send(msg);
+    // ttyd RESIZE_TERMINAL frame: '1' prefix + JSON {"columns":N,"rows":N}
+    const payload = JSON.stringify({ columns: term.cols, rows: term.rows });
+    const encoder = new TextEncoder();
+    const encoded = encoder.encode(payload);
+    const msg = new Uint8Array(1 + encoded.length);
+    msg[0] = 0x31; // '1' = RESIZE_TERMINAL
+    msg.set(encoded, 1);
+    ws.send(msg.buffer);
   }
 
   function teardownTerminal() {

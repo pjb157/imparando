@@ -24,6 +24,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["trace"] }
 bytes = "1"
+tokio-tungstenite = "0.24"
 subtle = "2"
 clap = { version = "4", features = ["derive"] }
 toml = "0.8"

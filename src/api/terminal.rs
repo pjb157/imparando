@@ -10,6 +10,10 @@ use uuid::Uuid;
 
 use crate::vm::SharedSessionManager;
 
+type TtydWs = tokio_tungstenite::WebSocketStream<
+    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+>;
+
 pub async fn terminal_ws(
     ws: WebSocketUpgrade,
     Path(id): Path<Uuid>,
@@ -19,64 +23,82 @@ pub async fn terminal_ws(
 }
 
 async fn handle_socket(socket: WebSocket, id: Uuid, manager: SharedSessionManager) {
-    let channels = manager.terminal_channels(id).await;
-    let (scrollback, mut output_rx, input_tx) = match channels {
-        Some(c) => c,
+    let vm_ip = match manager.get_session(id).await.and_then(|s| s.vm_ip) {
+        Some(ip) => ip,
         None => {
-            tracing::warn!(session_id = %id, "Terminal WS: session not found or not running");
+            tracing::warn!(session_id = %id, "Terminal WS: session not found or no IP");
             return;
         }
     };
 
-    tracing::info!(session_id = %id, scrollback_bytes = scrollback.len(), "Terminal WS connected");
+    let ttyd_url = format!("ws://{}:7681/ws", vm_ip);
+    tracing::info!(session_id = %id, url = %ttyd_url, "Connecting to ttyd");
 
-    let (mut ws_tx, mut ws_rx) = socket.split();
+    let ttyd_ws = match connect_ttyd(&ttyd_url, 60).await {
+        Ok(ws) => ws,
+        Err(e) => {
+            tracing::error!(session_id = %id, error = %e, "Failed to connect to ttyd");
+            return;
+        }
+    };
 
-    // Replay scrollback so late subscribers see prior output.
-    if !scrollback.is_empty() {
-        let _ = ws_tx.send(Message::Binary(scrollback.into())).await;
-    }
+    tracing::info!(session_id = %id, "Proxying terminal to ttyd");
 
-    // Task: VM output → WebSocket
-    let send_task = tokio::spawn(async move {
-        loop {
-            match output_rx.recv().await {
-                Ok(data) => {
-                    if ws_tx.send(Message::Binary(data.into())).await.is_err() {
-                        break;
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(session_id = %id, skipped = n, "Terminal output lagged");
-                }
+    let (mut browser_tx, mut browser_rx) = socket.split();
+    let (mut ttyd_tx, mut ttyd_rx) = ttyd_ws.split();
+
+    // Browser → ttyd
+    let b2t = tokio::spawn(async move {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+        while let Some(Ok(msg)) = browser_rx.next().await {
+            let out = match msg {
+                Message::Binary(data) => TMsg::Binary(data.to_vec().into()),
+                Message::Text(text) => TMsg::Text(text.into()),
+                Message::Close(_) => break,
+                _ => continue,
+            };
+            if ttyd_tx.send(out).await.is_err() {
+                break;
             }
         }
     });
 
-    // Main loop: WebSocket → VM input
-    while let Some(Ok(msg)) = ws_rx.next().await {
-        match msg {
-            Message::Binary(data) => {
-                if input_tx.send(bytes::Bytes::from(data)).is_err() {
-                    break;
-                }
+    // ttyd → browser
+    let t2b = tokio::spawn(async move {
+        use tokio_tungstenite::tungstenite::Message as TMsg;
+        while let Some(Ok(msg)) = ttyd_rx.next().await {
+            let out = match msg {
+                TMsg::Binary(data) => Message::Binary(data.to_vec()),
+                TMsg::Text(text) => Message::Text(text.to_string()),
+                TMsg::Close(_) => break,
+                _ => continue,
+            };
+            if browser_tx.send(out).await.is_err() {
+                break;
             }
-            Message::Text(text) => {
-                // Handle resize events: {"type":"resize","cols":80,"rows":24}
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if val.get("type").and_then(|t| t.as_str()) == Some("resize") {
-                        // Serial console doesn't support TIOCSWINSZ from outside;
-                        // acknowledge but take no action for now.
-                        tracing::debug!(session_id = %id, "Terminal resize event received");
-                    }
-                }
-            }
-            Message::Close(_) => break,
-            _ => {}
         }
+    });
+
+    tokio::select! {
+        _ = b2t => {}
+        _ = t2b => {}
     }
 
-    send_task.abort();
     tracing::info!(session_id = %id, "Terminal WS disconnected");
+}
+
+async fn connect_ttyd(url: &str, timeout_secs: u64) -> anyhow::Result<TtydWs> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        match tokio_tungstenite::connect_async(url).await {
+            Ok((ws, _)) => return Ok(ws),
+            Err(e) => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(anyhow::anyhow!("Timed out connecting to ttyd: {e}"));
+                }
+                tracing::debug!("ttyd not ready yet, retrying: {e}");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        }
+    }
 }

@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -52,17 +52,6 @@ pub struct CreateSessionRequest {
     pub private_repos: bool,
 }
 
-// ── Internal VM state ─────────────────────────────────────────────────────────
-
-struct VmChannels {
-    /// Broadcast sender — subscribers receive VM stdout bytes.
-    output_tx: broadcast::Sender<bytes::Bytes>,
-    /// Unbounded sender — callers push bytes into VM stdin.
-    input_tx: mpsc::UnboundedSender<bytes::Bytes>,
-    /// Rolling buffer of recent VM output, replayed to new WebSocket subscribers.
-    scrollback: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
-}
-
 // ── SessionManager ────────────────────────────────────────────────────────────
 
 pub type SharedSessionManager = Arc<SessionManager>;
@@ -70,7 +59,6 @@ pub type SharedSessionManager = Arc<SessionManager>;
 pub struct SessionManager {
     config: Config,
     sessions: RwLock<HashMap<Uuid, Session>>,
-    channels: RwLock<HashMap<Uuid, VmChannels>>,
 }
 
 impl SessionManager {
@@ -78,7 +66,6 @@ impl SessionManager {
         Arc::new(Self {
             config,
             sessions: RwLock::new(HashMap::new()),
-            channels: RwLock::new(HashMap::new()),
         })
     }
 
@@ -94,28 +81,12 @@ impl SessionManager {
         self.sessions.read().await.get(&id).cloned()
     }
 
-    /// Returns scrollback history, a broadcast receiver, and a stdin sender.
-    /// Callers should send the scrollback first, then stream from the receiver.
-    pub async fn terminal_channels(
-        &self,
-        id: Uuid,
-    ) -> Option<(bytes::Bytes, broadcast::Receiver<bytes::Bytes>, mpsc::UnboundedSender<bytes::Bytes>)> {
-        let channels = self.channels.read().await;
-        channels.get(&id).map(|c| {
-            // Subscribe before snapshotting so we don't miss messages between the two.
-            let rx = c.output_tx.subscribe();
-            let sb = bytes::Bytes::from(c.scrollback.lock().unwrap().clone());
-            (sb, rx, c.input_tx.clone())
-        })
-    }
-
     // ── Session lifecycle ─────────────────────────────────────────────────────
 
     pub async fn create_session(
         self: Arc<Self>,
         req: CreateSessionRequest,
     ) -> Result<Session> {
-        // Hold the write lock for the entire check+insert to prevent TOCTOU races.
         let session = {
             let mut sessions = self.sessions.write().await;
             if sessions.len() >= self.config.max_sessions {
@@ -164,9 +135,6 @@ impl SessionManager {
 
         self.set_status(id, SessionStatus::Stopping, None).await;
 
-        // Drop channels — this disconnects all WebSocket clients.
-        self.channels.write().await.remove(&id);
-
         let manager = Arc::clone(&self);
         tokio::spawn(async move {
             if let Err(e) = manager.teardown_vm(id).await {
@@ -188,8 +156,6 @@ impl SessionManager {
             SessionStatus::Running | SessionStatus::Starting | SessionStatus::Creating
         );
 
-        // Drop channels to disconnect WebSocket clients.
-        self.channels.write().await.remove(&id);
         self.sessions.write().await.remove(&id);
 
         if needs_teardown {
@@ -228,15 +194,6 @@ impl SessionManager {
 
         tracing::info!(count = ids.len(), "Shutting down sessions");
 
-        // Remove all channels first to disconnect WebSocket clients.
-        {
-            let mut channels = self.channels.write().await;
-            for id in &ids {
-                channels.remove(id);
-            }
-        }
-
-        // Teardown all VMs concurrently.
         let handles: Vec<_> = ids
             .into_iter()
             .map(|id| {
@@ -270,10 +227,7 @@ impl SessionManager {
         }
     }
 
-    /// Full VM boot sequence. Runs in a background task.
     async fn boot_vm(&self, id: Uuid) -> Result<()> {
-        // Use `?` rather than `unwrap()` — the session could theoretically be
-        // deleted between create_session inserting it and this task starting.
         let session = self
             .get_session(id)
             .await
@@ -308,6 +262,7 @@ impl SessionManager {
         OverlayManager::create_overlay(
             &self.config.base_rootfs_path,
             &overlay_path,
+            &self.config.ttyd_bin,
             &session.repos,
             ssh_key.as_deref(),
             &vm_ip,
@@ -332,13 +287,12 @@ impl SessionManager {
         let mut child = tokio::process::Command::new(&self.config.firecracker_bin)
             .arg("--api-sock")
             .arg(&api_sock)
-            .stdin(std::process::Stdio::piped())
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(stderr_file)
             .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to spawn Firecracker ({:?}): {e}", self.config.firecracker_bin))?;
 
-        let child_stdin = child.stdin.take().unwrap();
         let child_stdout = child.stdout.take().unwrap();
 
         // 4. Wait for API socket
@@ -368,25 +322,11 @@ impl SessionManager {
             if !stderr.is_empty() {
                 tracing::error!(session_id = %id, "Firecracker stderr:\n{stderr}");
             }
-            tracing::error!(session_id = %id, "Firecracker API configuration failed: {e}");
             return Err(config_result.unwrap_err());
         }
         tracing::info!(session_id = %id, "VM started");
 
-        self.set_status(id, SessionStatus::Starting, None).await;
-
-        // 6. Wire up terminal I/O channels
-        let (output_tx, _) = broadcast::channel::<bytes::Bytes>(256);
-        let (input_tx, input_rx) = mpsc::unbounded_channel::<bytes::Bytes>();
-        let scrollback = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
-
-        self.channels.write().await.insert(
-            id,
-            VmChannels { output_tx: output_tx.clone(), input_tx, scrollback: scrollback.clone() },
-        );
-
-        // Task: VM stdout → scrollback buffer + console log file + broadcast channel
-        let output_tx_clone = output_tx.clone();
+        // 6. Capture serial console to log file (for debugging)
         let console_log = run_dir.join("console.log");
         tokio::spawn(async move {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -397,41 +337,15 @@ impl SessionManager {
                 match stdout.read(&mut buf).await {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        let chunk = bytes::Bytes::copy_from_slice(&buf[..n]);
-                        {
-                            let mut sb = scrollback.lock().unwrap();
-                            sb.extend_from_slice(&buf[..n]);
-                            const MAX: usize = 128 * 1024;
-                            if sb.len() > MAX {
-                                let excess = sb.len() - MAX;
-                                sb.drain(..excess);
-                            }
-                        }
                         if let Some(ref mut f) = log_file {
-                            let _ = f.write_all(&chunk).await;
+                            let _ = f.write_all(&buf[..n]).await;
                         }
-                        let _ = output_tx_clone.send(chunk);
                     }
                 }
             }
-            tracing::debug!(session_id = %id, "VM stdout closed");
         });
 
-        // Task: input channel → VM stdin
-        tokio::spawn(async move {
-            use tokio::io::AsyncWriteExt;
-            let mut stdin = child_stdin;
-            let mut rx = input_rx;
-            while let Some(data) = rx.recv().await {
-                if stdin.write_all(&data).await.is_err() {
-                    break;
-                }
-            }
-            tracing::debug!(session_id = %id, "VM stdin closed");
-        });
-
-        // Task: wait for Firecracker to exit, then clean up.
-        // This is the sole owner of cleanup for a fully-booted VM.
+        // 7. Watch for Firecracker exit and clean up.
         {
             let run_dir_owned = run_dir.clone();
             let tap_name_owned = tap_name.clone();
@@ -449,23 +363,15 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Signal the VM to stop. Cleanup is handled by the process-exit watcher
-    /// spawned in boot_vm. For VMs that never fully booted, cleans up directly.
     async fn teardown_vm(&self, id: Uuid) -> Result<()> {
         let api_sock = self.config.run_dir.join(id.to_string()).join("api.sock");
         let vm_started = api_sock.exists();
 
         if vm_started {
-            // VM is running — send graceful shutdown signal. The process-exit
-            // watcher task (spawned in boot_vm) will handle TAP/overlay cleanup
-            // once the process exits.
             let fc = FirecrackerClient::new(api_sock.to_str().unwrap());
             let _ = fc.send_ctrl_alt_del().await;
-            // Give Firecracker a moment to begin shutdown.
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         } else {
-            // VM never fully started — no watcher task was spawned, so we clean
-            // up directly here.
             let session = self.get_session(id).await;
             if let Some(s) = session {
                 if let Some(ref tap) = s.tap_name {
@@ -480,7 +386,6 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Pick the lowest unused TAP index (0–9). Returns an error if all slots are full.
     async fn assign_vm_index(&self) -> Result<u8> {
         let sessions = self.sessions.read().await;
         let used: std::collections::HashSet<u8> = sessions
