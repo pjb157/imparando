@@ -23,10 +23,12 @@ async fn handle_socket(socket: WebSocket, id: Uuid, manager: SharedSessionManage
     let (scrollback, mut output_rx, input_tx) = match channels {
         Some(c) => c,
         None => {
-            tracing::warn!(session_id = %id, "Terminal connect: session not found or not running");
+            tracing::warn!(session_id = %id, "Terminal WS: session not found or not running");
             return;
         }
     };
+
+    tracing::info!(session_id = %id, scrollback_bytes = scrollback.len(), "Terminal WS connected");
 
     let (mut ws_tx, mut ws_rx) = socket.split();
 
@@ -76,5 +78,5 @@ async fn handle_socket(socket: WebSocket, id: Uuid, manager: SharedSessionManage
     }
 
     send_task.abort();
-    tracing::debug!(session_id = %id, "Terminal WebSocket closed");
+    tracing::info!(session_id = %id, "Terminal WS disconnected");
 }
