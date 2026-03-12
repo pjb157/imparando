@@ -11,6 +11,8 @@
 .vscode/
 *.swp
 *.swo
+logs*.txt
+logs*.tx
 
 # Secrets (belt-and-suspenders)
 .env

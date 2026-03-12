@@ -162,6 +162,10 @@ impl FirecrackerClient {
         .await
     }
 
+    pub async fn configure_entropy(&self) -> Result<()> {
+        self.put("/entropy", "{}").await
+    }
+
     pub async fn start(&self) -> Result<()> {
         self.put(
             "/actions",

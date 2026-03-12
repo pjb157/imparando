@@ -1,8 +1,12 @@
 use anyhow::Result;
+use std::io::Read;
 use std::path::Path;
 use tokio::process::Command;
 
 pub struct OverlayManager;
+
+const VM_MTU: &str = "576";
+const VM_ADVMSS: &str = "536";
 
 fn validate_repo_url(url: &str) -> Result<()> {
     let forbidden = [';', '&', '|', '$', '`', '(', ')', '<', '>', '\n', '\r', '\\'];
@@ -48,6 +52,24 @@ impl OverlayManager {
             // Write startup script
             let script_path = mount_dir.join("startup.sh");
             tokio::fs::write(&script_path, &script).await?;
+
+            // Seed the guest CRNG from host entropy so TLS clients don't block
+            // waiting for early-boot randomness inside minimal microVMs.
+            let mut seed = [0u8; 512];
+            std::fs::File::open("/dev/urandom")?.read_exact(&mut seed)?;
+            tokio::fs::write(mount_dir.join("etc/imparando-random-seed"), seed).await?;
+
+            // Avoid "(none)" hostname resolution warnings from sudo.
+            tokio::fs::write(
+                mount_dir.join("etc/hostname"),
+                "imparando\n",
+            )
+            .await?;
+            tokio::fs::write(
+                mount_dir.join("etc/hosts"),
+                "127.0.0.1 localhost imparando\n::1 localhost ip6-localhost ip6-loopback\n",
+            )
+            .await?;
 
             // Copy ttyd binary
             let ttyd_dest = mount_dir.join("usr/local/bin/ttyd");
@@ -104,12 +126,35 @@ fn build_startup_script(
         "mount -t devtmpfs devtmpfs /dev 2>/dev/null || true".to_string(),
         "mkdir -p /dev/pts".to_string(),
         "mount -t devpts devpts /dev/pts 2>/dev/null || true".to_string(),
+        "hostname imparando 2>/dev/null || true".to_string(),
         String::new(),
-        "# Network setup".to_string(),
+        "# Seed the kernel RNG early to prevent TLS tools from blocking waiting".to_string(),
+        "# for entropy in tiny Firecracker guests.".to_string(),
+        "if [ -f /etc/imparando-random-seed ]; then".to_string(),
+        "  cat /etc/imparando-random-seed > /dev/urandom 2>/dev/null || true".to_string(),
+        "fi".to_string(),
+        "if command -v haveged >/dev/null 2>&1; then".to_string(),
+        "  haveged -w 1024 >/var/log/haveged.log 2>&1 &".to_string(),
+        "fi".to_string(),
+        String::new(),
+        "# Network setup — use reduced MTU to avoid packet drops".to_string(),
+        "# through iptables FORWARD chains on k8s hosts.".to_string(),
         format!("ip addr add {vm_ip}/24 dev eth0"),
         "ip link set eth0 up".to_string(),
-        format!("ip route add default via {gw_ip}"),
+        format!("ip link set eth0 mtu {VM_MTU}"),
+        "if command -v ethtool >/dev/null 2>&1; then ethtool -K eth0 tx off sg off tso off gso off gro off rx off || true; fi".to_string(),
+        format!("ip route add default via {gw_ip} advmss {VM_ADVMSS}"),
         "echo 'nameserver 8.8.8.8' > /etc/resolv.conf".to_string(),
+        String::new(),
+        "# Route outbound HTTP(S) through the host-side CONNECT proxy.".to_string(),
+        format!("export HTTP_PROXY='http://{gw_ip}:3128'"),
+        format!("export HTTPS_PROXY='http://{gw_ip}:3128'"),
+        format!("export ALL_PROXY='http://{gw_ip}:3128'"),
+        format!("export http_proxy='http://{gw_ip}:3128'"),
+        format!("export https_proxy='http://{gw_ip}:3128'"),
+        format!("export all_proxy='http://{gw_ip}:3128'"),
+        "export NO_PROXY='localhost,127.0.0.1,::1'".to_string(),
+        "export no_proxy='localhost,127.0.0.1,::1'".to_string(),
         String::new(),
     ];
 
@@ -136,20 +181,39 @@ fn build_startup_script(
     }
 
     lines.push("export TERM=xterm-256color".to_string());
+    lines.push(String::new());
+
+    lines.push("# Start PostgreSQL".to_string());
+    lines.push("if [ -x /usr/local/bin/start-postgres.sh ]; then".to_string());
+    lines.push("  /usr/local/bin/start-postgres.sh || echo 'WARNING: PostgreSQL failed to start'".to_string());
+    lines.push("fi".to_string());
+    lines.push(String::new());
+
     lines.push("mkdir -p /root/workspace".to_string());
     lines.push("cd /root/workspace".to_string());
     lines.push(String::new());
 
+    lines.push("# Start ttyd with tmux immediately, clone repos in the background.".to_string());
+    lines.push("if command -v tmux >/dev/null 2>&1; then".to_string());
+    lines.push("  tmux new-session -d -s main -c /root/workspace".to_string());
+
     if !repos.is_empty() {
-        lines.push("# Clone repositories".to_string());
-        for repo in repos {
-            lines.push(format!("git clone '{repo}'"));
-        }
-        lines.push(String::new());
+        // Clone repos inside a background script that runs in tmux
+        // so the user can see progress in the terminal.
+        let clone_cmds: Vec<String> = repos.iter().map(|repo| {
+            format!("git clone '{repo}' || echo 'WARNING: failed to clone {repo}'")
+        }).collect();
+        let all_clones = clone_cmds.join(" && ");
+        lines.push(format!(
+            "  tmux send-keys -t main '{}; echo \"--- repos ready ---\"' Enter",
+            all_clones
+        ));
     }
 
-    lines.push("# Start ttyd — provides a proper PTY for Claude Code".to_string());
-    lines.push("exec ttyd -W claude".to_string());
+    lines.push("  exec ttyd -W tmux attach -t main".to_string());
+    lines.push("else".to_string());
+    lines.push("  exec ttyd -W bash".to_string());
+    lines.push("fi".to_string());
 
     lines.join("\n")
 }

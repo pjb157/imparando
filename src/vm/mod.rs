@@ -1,6 +1,7 @@
 pub mod firecracker;
 pub mod network;
 pub mod overlay;
+pub mod proxy;
 
 use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
@@ -314,6 +315,9 @@ impl SessionManager {
             fc.configure_boot_source(&kernel_path).await?;
             fc.configure_rootfs(&overlay_path_str).await?;
             fc.configure_network(&tap_name, &mac).await?;
+            if let Err(e) = fc.configure_entropy().await {
+                tracing::warn!(session_id = %id, error = %e, "Failed to configure virtio-rng entropy device");
+            }
             fc.start().await
         }.await;
 
@@ -352,6 +356,20 @@ impl SessionManager {
             let overlay_owned = overlay_path.clone();
             tokio::spawn(async move {
                 let _ = child.wait().await;
+                // Log console output before cleaning up (helps debug kernel panics)
+                let console_log = run_dir_owned.join("console.log");
+                if let Ok(content) = tokio::fs::read_to_string(&console_log).await {
+                    if !content.is_empty() {
+                        let tail: String = content.lines().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+                        tracing::error!(session_id = %id, "VM console (last 30 lines):\n{tail}");
+                    }
+                }
+                let fc_log = run_dir_owned.join("firecracker.log");
+                if let Ok(content) = tokio::fs::read_to_string(&fc_log).await {
+                    if !content.is_empty() {
+                        tracing::error!(session_id = %id, "Firecracker log:\n{content}");
+                    }
+                }
                 tracing::info!(session_id = %id, "Firecracker process exited");
                 let _ = NetworkManager::teardown_tap(&tap_name_owned).await;
                 let _ = tokio::fs::remove_file(&overlay_owned).await;

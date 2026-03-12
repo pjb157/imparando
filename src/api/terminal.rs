@@ -59,36 +59,83 @@ async fn handle_socket(socket: WebSocket, id: Uuid, manager: SharedSessionManage
     let (mut browser_tx, mut browser_rx) = socket.split();
     let (mut ttyd_tx, mut ttyd_rx) = ttyd_ws.split();
 
+    let sid = id;
     // Browser → ttyd
     let b2t = tokio::spawn(async move {
         use tokio_tungstenite::tungstenite::Message as TMsg;
-        while let Some(Ok(msg)) = browser_rx.next().await {
-            let out = match msg {
-                Message::Binary(data) => TMsg::Binary(data.to_vec().into()),
-                Message::Text(text) => TMsg::Text(text.into()),
-                Message::Close(_) => break,
-                _ => continue,
-            };
-            if ttyd_tx.send(out).await.is_err() {
-                break;
+        while let Some(result) = browser_rx.next().await {
+            match result {
+                Err(e) => {
+                    tracing::warn!(session_id = %sid, error = %e, "browser_rx error");
+                    break;
+                }
+                Ok(msg) => {
+                    let out = match &msg {
+                        Message::Binary(data) => {
+                            if !data.is_empty() {
+                                tracing::debug!(session_id = %sid, type_byte = data[0], len = data.len(), "browser→ttyd binary");
+                            }
+                            TMsg::Binary(data.to_vec().into())
+                        }
+                        Message::Text(text) => {
+                            tracing::debug!(session_id = %sid, len = text.len(), "browser→ttyd text");
+                            TMsg::Text(text.clone().into())
+                        }
+                        Message::Close(_) => {
+                            tracing::info!(session_id = %sid, "browser sent close");
+                            break;
+                        }
+                        _ => continue,
+                    };
+                    if ttyd_tx.send(out).await.is_err() {
+                        tracing::warn!(session_id = %sid, "ttyd_tx send failed");
+                        break;
+                    }
+                }
             }
         }
+        tracing::info!(session_id = %sid, "browser→ttyd loop ended");
     });
 
+    let sid = id;
     // ttyd → browser
     let t2b = tokio::spawn(async move {
         use tokio_tungstenite::tungstenite::Message as TMsg;
-        while let Some(Ok(msg)) = ttyd_rx.next().await {
-            let out = match msg {
-                TMsg::Binary(data) => Message::Binary(data.to_vec()),
-                TMsg::Text(text) => Message::Text(text.to_string()),
-                TMsg::Close(_) => break,
-                _ => continue,
-            };
-            if browser_tx.send(out).await.is_err() {
-                break;
+        let mut msg_count: u64 = 0;
+        while let Some(result) = ttyd_rx.next().await {
+            match result {
+                Err(e) => {
+                    tracing::warn!(session_id = %sid, error = %e, "ttyd_rx error");
+                    break;
+                }
+                Ok(msg) => {
+                    msg_count += 1;
+                    let out = match &msg {
+                        TMsg::Binary(data) => {
+                            if msg_count <= 10 || msg_count % 100 == 0 {
+                                let type_byte = data.first().copied().unwrap_or(0);
+                                tracing::info!(session_id = %sid, type_byte, len = data.len(), msg_count, "ttyd→browser binary");
+                            }
+                            Message::Binary(data.to_vec())
+                        }
+                        TMsg::Text(text) => {
+                            tracing::info!(session_id = %sid, text = %text, "ttyd→browser text");
+                            Message::Text(text.to_string())
+                        }
+                        TMsg::Close(_) => {
+                            tracing::info!(session_id = %sid, "ttyd sent close");
+                            break;
+                        }
+                        _ => continue,
+                    };
+                    if browser_tx.send(out).await.is_err() {
+                        tracing::warn!(session_id = %sid, "browser_tx send failed");
+                        break;
+                    }
+                }
             }
         }
+        tracing::info!(session_id = %sid, msg_count, "ttyd→browser loop ended");
     });
 
     tokio::select! {
@@ -100,9 +147,26 @@ async fn handle_socket(socket: WebSocket, id: Uuid, manager: SharedSessionManage
 }
 
 async fn connect_ttyd(url: &str, timeout_secs: u64) -> anyhow::Result<TtydWs> {
+    use tokio_tungstenite::tungstenite::http;
+
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
     loop {
-        match tokio_tungstenite::connect_async(url).await {
+        // ttyd requires the "tty" WebSocket subprotocol — without it, the
+        // connection is accepted but ttyd never routes messages to the PTY.
+        let request = http::Request::builder()
+            .uri(url)
+            .header("Sec-WebSocket-Protocol", "tty")
+            .header("Host", http::Uri::try_from(url).ok()
+                .and_then(|u| u.authority().map(|a| a.to_string()))
+                .unwrap_or_default())
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key())
+            .body(())
+            .expect("valid request");
+
+        match tokio_tungstenite::connect_async(request).await {
             Ok((ws, _)) => return Ok(ws),
             Err(e) => {
                 if tokio::time::Instant::now() >= deadline {

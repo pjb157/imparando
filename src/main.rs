@@ -42,6 +42,16 @@ async fn main() -> Result<()> {
     let manager = SessionManager::new(config.clone());
     let shutdown_manager = std::sync::Arc::clone(&manager);
 
+    // Start the HTTP CONNECT proxy for VM outbound traffic.
+    // VMs set HTTP(S)_PROXY=http://172.16.x.1:3128 so their traffic flows
+    // through the proxy over plain TCP, avoiding NAT/iptables TLS issues.
+    let proxy_addr = SocketAddr::from(([0, 0, 0, 0], 3128));
+    tokio::spawn(async move {
+        if let Err(e) = vm::proxy::run_connect_proxy(proxy_addr).await {
+            tracing::error!(error = %e, "CONNECT proxy failed");
+        }
+    });
+
     let app = api::router(manager, config.user.clone(), config.pass.clone());
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;

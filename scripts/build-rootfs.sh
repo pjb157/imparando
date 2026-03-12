@@ -54,7 +54,8 @@ trap cleanup EXIT
 
 # Run debootstrap for Ubuntu jammy
 info "Running debootstrap for Ubuntu 22.04 (jammy)..."
-debootstrap --include=curl,ca-certificates,git,openssh-client,iproute2,iptables \
+debootstrap --components=main,universe \
+    --include=curl,ca-certificates,ethtool,git,haveged,openssh-client,iproute2,iptables \
     jammy "$TMPDIR" http://archive.ubuntu.com/ubuntu/
 success "debootstrap complete."
 
@@ -71,6 +72,31 @@ success "Node.js installed."
 info "Installing @anthropic-ai/claude-code globally..."
 chroot "$TMPDIR" npm install -g @anthropic-ai/claude-code
 success "Claude Code installed."
+
+# Install tmux (persistent terminal sessions) and PostgreSQL
+info "Installing tmux and PostgreSQL..."
+chroot "$TMPDIR" apt-get install -y tmux postgresql postgresql-client
+success "tmux and PostgreSQL installed."
+
+# Configure PostgreSQL to start without systemd
+info "Configuring PostgreSQL for microVM use..."
+cat > "$TMPDIR/usr/local/bin/start-postgres.sh" << 'PGEOF'
+#!/bin/bash
+# Start PostgreSQL in the microVM (no systemd)
+PG_VERSION=$(ls /etc/postgresql/ | head -1)
+PG_DATA="/var/lib/postgresql/$PG_VERSION/main"
+
+# Fix ownership (may be wrong after overlay copy)
+mkdir -p /var/run/postgresql /var/log/postgresql
+chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql /var/log/postgresql
+chmod 700 "$PG_DATA"
+
+# Start PostgreSQL (use su -s to avoid login shell cd issues)
+su -s /bin/sh postgres -c "/usr/lib/postgresql/$PG_VERSION/bin/pg_ctl -D '$PG_DATA' -l /var/log/postgresql/postgresql.log start -w"
+echo "PostgreSQL started on port 5432"
+PGEOF
+chmod +x "$TMPDIR/usr/local/bin/start-postgres.sh"
+success "PostgreSQL configured."
 
 # Write /startup.sh placeholder
 info "Writing /startup.sh placeholder..."
