@@ -1,0 +1,19 @@
+[Unit]
+Description=Imparando Firecracker VM manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/imparando/current
+EnvironmentFile=/etc/imparando/imparando.env
+ExecStart=/opt/imparando/current/bin/imparando --config /etc/imparando/config.toml
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

@@ -114,44 +114,9 @@ async fn handle_connection(mut client: TcpStream, peer: SocketAddr) -> anyhow::R
         tracing::info!(%peer, %target, bytes = first_n, hex, "first chunk from VM");
         upstream.write_all(&first_buf[..first_n]).await?;
 
-        // Now read the first response chunk from upstream.
-        let mut resp_buf = vec![0u8; 4096];
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            upstream.read(&mut resp_buf),
-        )
-        .await
-        {
-            Ok(Ok(n)) if n > 0 => {
-                let hex: String = resp_buf[..n.min(64)]
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                tracing::info!(%peer, %target, bytes = n, hex, "first chunk from upstream");
-                client.write_all(&resp_buf[..n]).await?;
-            }
-            Ok(Ok(_)) => {
-                tracing::warn!(%peer, %target, "upstream closed without sending data");
-                return Ok(());
-            }
-            Ok(Err(e)) => {
-                tracing::warn!(%peer, %target, error = %e, "upstream read error");
-                return Ok(());
-            }
-            Err(_) => {
-                // Timeout — check if the upstream socket is healthy.
-                let local = upstream.local_addr().ok();
-                let remote = upstream.peer_addr().ok();
-                tracing::error!(
-                    %peer, %target, ?local, ?remote,
-                    "upstream did not respond within 10s after receiving ClientHello"
-                );
-                return Ok(());
-            }
-        }
-
-        // Continue relaying the rest bidirectionally.
+        // Continue relaying bidirectionally immediately. Some TLS handshakes
+        // span multiple client packets, so waiting for an upstream response
+        // before forwarding more client bytes can deadlock.
         match tokio::io::copy_bidirectional(&mut client, &mut upstream).await {
             Ok((c2u, u2c)) => {
                 tracing::info!(%peer, %target, c2u, u2c, "relay finished");

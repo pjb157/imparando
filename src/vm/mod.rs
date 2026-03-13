@@ -29,12 +29,26 @@ pub enum SessionStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentKind {
+    Claude,
+    Codex,
+}
+
+impl Default for AgentKind {
+    fn default() -> Self {
+        Self::Claude
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: Uuid,
     pub name: String,
     pub status: SessionStatus,
     pub repos: Vec<String>,
+    pub agent: AgentKind,
     pub vcpus: u8,
     pub memory_mb: u32,
     pub private_repos: bool,
@@ -48,6 +62,8 @@ pub struct Session {
 pub struct CreateSessionRequest {
     pub name: String,
     pub repos: Vec<String>,
+    #[serde(default)]
+    pub agent: AgentKind,
     pub vcpus: u8,
     pub memory_mb: u32,
     pub private_repos: bool,
@@ -101,6 +117,7 @@ impl SessionManager {
                 name: req.name,
                 status: SessionStatus::Creating,
                 repos: req.repos,
+                agent: req.agent,
                 vcpus: req.vcpus.clamp(1, 4),
                 memory_mb: req.memory_mb.clamp(512, 4096),
                 private_repos: req.private_repos,
@@ -264,12 +281,15 @@ impl SessionManager {
             &self.config.base_rootfs_path,
             &overlay_path,
             &self.config.ttyd_bin,
+            &self.config.auth_home,
             &session.repos,
+            session.agent,
             ssh_key.as_deref(),
             &vm_ip,
             &gw_ip,
             self.config.anthropic_api_key.as_deref(),
             self.config.claude_oauth_token.as_deref(),
+            self.config.openai_api_key.as_deref(),
         )
         .await?;
 

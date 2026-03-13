@@ -431,7 +431,7 @@
 
     .form-row {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
       gap: 12px;
     }
 
@@ -527,13 +527,18 @@
 
     #terminal-container {
       flex: 1;
-      overflow: hidden;
+      overflow: auto;
       background: #0a0e14;
     }
 
     #terminal-container .xterm {
       height: 100%;
       padding: 4px 0 0 4px;
+    }
+
+    #terminal-container .xterm-viewport {
+      overflow-y: auto !important;
+      overscroll-behavior: contain;
     }
 
     /* ── Spinner ── */
@@ -667,6 +672,13 @@
           <textarea id="f-repos" placeholder="https://github.com/user/repo"></textarea>
         </div>
         <div class="form-row">
+          <div class="form-group">
+            <label for="f-agent">Agent</label>
+            <select id="f-agent">
+              <option value="claude" selected>Claude</option>
+              <option value="codex">Codex</option>
+            </select>
+          </div>
           <div class="form-group">
             <label for="f-vcpus">vCPUs</label>
             <select id="f-vcpus">
@@ -933,6 +945,7 @@
       }).join('');
 
       var canOpen = s.status === 'running';
+      var agent = s.agent === 'codex' ? 'Codex' : 'Claude';
 
       return '<div class="session-card" data-id="' + escHtml(s.id) + '"' +
         (canOpen ? ' onclick="openSession(\'' + escHtml(s.id) + '\')"' : '') + '>' +
@@ -947,6 +960,7 @@
         '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteSession(\'' + escHtml(s.id) + '\')">Delete</button>' +
         '</div></div>' +
         '<div class="session-meta">' +
+        '<span>' + escHtml(agent) + '</span>' +
         '<span>' + escHtml(String(s.vcpus || '?')) + ' vCPU</span>' +
         '<span>' + escHtml(String(s.memory_mb || '?')) + ' MB RAM</span>' +
         (s.created_at ? '<span>' + escHtml(formatUptime(s.created_at)) + ' uptime</span>' : '') +
@@ -1007,6 +1021,7 @@
 
     var name = document.getElementById('f-name').value.trim();
     var reposRaw = document.getElementById('f-repos').value.trim();
+    var agent = document.getElementById('f-agent').value;
     var vcpus = parseInt(document.getElementById('f-vcpus').value, 10);
     var memory_mb = parseInt(document.getElementById('f-memory').value, 10);
     var private_repos = document.getElementById('f-private-repos').checked;
@@ -1024,7 +1039,7 @@
     try {
       await apiFetch('/api/sessions', {
         method: 'POST',
-        body: JSON.stringify({ name: name, repos: repos, vcpus: vcpus, memory_mb: memory_mb, private_repos: private_repos }),
+        body: JSON.stringify({ name: name, repos: repos, agent: agent, vcpus: vcpus, memory_mb: memory_mb, private_repos: private_repos }),
       });
       closeModal();
       showToast('Session created!', 'success');
@@ -1091,6 +1106,9 @@
       cursorBlink: false,
       cursorStyle: 'bar',
       scrollback: 10000,
+      scrollOnUserInput: true,
+      scrollSensitivity: 3,
+      fastScrollSensitivity: 5,
       allowTransparency: false,
     });
 
@@ -1098,6 +1116,9 @@
     term.loadAddon(fitAddon);
     term.open(container);
     fitAddon.fit();
+    if (term.attachCustomWheelEventHandler) {
+      term.attachCustomWheelEventHandler(function() { return true; });
+    }
 
     connectWebSocket(sessionId);
 

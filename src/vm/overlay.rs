@@ -3,10 +3,16 @@ use std::io::Read;
 use std::path::Path;
 use tokio::process::Command;
 
+use crate::vm::AgentKind;
+
 pub struct OverlayManager;
 
 const VM_MTU: &str = "576";
 const VM_ADVMSS: &str = "536";
+
+fn host_codex_auth_exists(host_home: &Path) -> bool {
+    host_home.join(".codex/auth.json").exists()
+}
 
 fn validate_repo_url(url: &str) -> Result<()> {
     let forbidden = [';', '&', '|', '$', '`', '(', ')', '<', '>', '\n', '\r', '\\'];
@@ -25,20 +31,38 @@ impl OverlayManager {
         base_path: &Path,
         overlay_path: &Path,
         ttyd_bin: &Path,
+        auth_home: &Path,
         repos: &[String],
+        agent: AgentKind,
         ssh_key: Option<&str>,
         vm_ip: &str,
         gw_ip: &str,
         anthropic_api_key: Option<&str>,
         claude_oauth_token: Option<&str>,
+        openai_api_key: Option<&str>,
     ) -> Result<()> {
         for repo in repos {
             validate_repo_url(repo)?;
         }
 
+        let effective_openai_api_key = openai_api_key
+            .map(str::to_owned)
+            .or_else(|| read_codex_api_key_from_host(auth_home));
+        let codex_auth_available = effective_openai_api_key.is_some() || host_codex_auth_exists(auth_home);
+
         tokio::fs::copy(base_path, overlay_path).await?;
 
-        let script = build_startup_script(repos, ssh_key, vm_ip, gw_ip, anthropic_api_key, claude_oauth_token);
+        let script = build_startup_script(
+            repos,
+            agent,
+            ssh_key,
+            vm_ip,
+            gw_ip,
+            anthropic_api_key,
+            claude_oauth_token,
+            effective_openai_api_key.as_deref(),
+            codex_auth_available,
+        );
 
         let mount_dir = overlay_path.with_extension("mnt");
         tokio::fs::create_dir_all(&mount_dir).await?;
@@ -92,6 +116,16 @@ gitlab.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAA
                 .await?;
             }
 
+            if agent == AgentKind::Claude
+                && anthropic_api_key.is_none()
+                && claude_oauth_token.is_none()
+            {
+                copy_claude_auth(auth_home, &mount_dir).await?;
+            }
+            if agent == AgentKind::Codex && effective_openai_api_key.is_none() {
+                copy_codex_auth(auth_home, &mount_dir).await?;
+            }
+
             run("chmod", &["+x", script_path.to_str().unwrap()]).await?;
             Ok::<(), anyhow::Error>(())
         }
@@ -108,13 +142,69 @@ gitlab.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAA
     }
 }
 
+fn read_codex_api_key_from_host(host_home: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(host_home.join(".codex/auth.json")).ok()?;
+    let data: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    data.get("OPENAI_API_KEY")?.as_str().map(str::to_owned)
+}
+
+async fn copy_if_exists(src: &Path, dst: &Path) -> Result<()> {
+    if !src.exists() {
+        return Ok(());
+    }
+
+    if let Some(parent) = dst.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::copy(src, dst).await?;
+    run("chmod", &["600", dst.to_str().unwrap()]).await?;
+    Ok(())
+}
+
+async fn copy_claude_auth(host_home: &Path, mount_dir: &Path) -> Result<()> {
+    let vm_claude_dir = mount_dir.join("root/.claude");
+    tokio::fs::create_dir_all(&vm_claude_dir).await?;
+
+    copy_if_exists(
+        &host_home.join(".claude/.credentials.json"),
+        &vm_claude_dir.join(".credentials.json"),
+    )
+    .await?;
+    copy_if_exists(
+        &host_home.join(".claude.json"),
+        &mount_dir.join("root/.claude.json"),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn copy_codex_auth(host_home: &Path, mount_dir: &Path) -> Result<()> {
+    let vm_codex_dir = mount_dir.join("root/.codex");
+    tokio::fs::create_dir_all(&vm_codex_dir).await?;
+
+    copy_if_exists(
+        &host_home.join(".codex/auth.json"),
+        &vm_codex_dir.join("auth.json"),
+    )
+    .await?;
+    copy_if_exists(
+        &host_home.join(".codex/config.toml"),
+        &vm_codex_dir.join("config.toml"),
+    )
+    .await?;
+    Ok(())
+}
+
 fn build_startup_script(
     repos: &[String],
+    agent: AgentKind,
     ssh_key: Option<&str>,
     vm_ip: &str,
     gw_ip: &str,
     anthropic_api_key: Option<&str>,
     claude_oauth_token: Option<&str>,
+    openai_api_key: Option<&str>,
+    codex_auth_available: bool,
 ) -> String {
     let mut lines = vec![
         "#!/bin/bash".to_string(),
@@ -140,6 +230,7 @@ fn build_startup_script(
         "# Network setup — use reduced MTU to avoid packet drops".to_string(),
         "# through iptables FORWARD chains on k8s hosts.".to_string(),
         format!("ip addr add {vm_ip}/24 dev eth0"),
+        "ip link set lo up".to_string(),
         "ip link set eth0 up".to_string(),
         format!("ip link set eth0 mtu {VM_MTU}"),
         "if command -v ethtool >/dev/null 2>&1; then ethtool -K eth0 tx off sg off tso off gso off gro off rx off || true; fi".to_string(),
@@ -155,6 +246,8 @@ fn build_startup_script(
         format!("export all_proxy='http://{gw_ip}:3128'"),
         "export NO_PROXY='localhost,127.0.0.1,::1'".to_string(),
         "export no_proxy='localhost,127.0.0.1,::1'".to_string(),
+        "export HOME='/root'".to_string(),
+        "export CODEX_HOME='/root/.codex'".to_string(),
         String::new(),
     ];
 
@@ -180,6 +273,13 @@ fn build_startup_script(
         lines.push(String::new());
     }
 
+    if let Some(key) = openai_api_key {
+        lines.push("# Codex credentials".to_string());
+        let escaped = key.replace('\'', "'\"'\"'");
+        lines.push(format!("export OPENAI_API_KEY='{escaped}'"));
+        lines.push(String::new());
+    }
+
     lines.push("export TERM=xterm-256color".to_string());
     lines.push(String::new());
 
@@ -196,6 +296,10 @@ fn build_startup_script(
     lines.push("# Start ttyd with tmux immediately, clone repos in the background.".to_string());
     lines.push("if command -v tmux >/dev/null 2>&1; then".to_string());
     lines.push("  tmux new-session -d -s main -c /root/workspace".to_string());
+    lines.push("  tmux set-option -t main history-limit 50000".to_string());
+    lines.push("  tmux set-option -t main mouse off".to_string());
+    lines.push("  tmux set-option -t main terminal-overrides 'xterm*:smcup@:rmcup@'".to_string());
+    lines.push("  tmux set-window-option -t main alternate-screen off".to_string());
 
     if !repos.is_empty() {
         // Clone repos inside a background script that runs in tmux
@@ -203,11 +307,33 @@ fn build_startup_script(
         let clone_cmds: Vec<String> = repos.iter().map(|repo| {
             format!("git clone '{repo}' || echo 'WARNING: failed to clone {repo}'")
         }).collect();
-        let all_clones = clone_cmds.join(" && ");
-        lines.push(format!(
-            "  tmux send-keys -t main '{}; echo \"--- repos ready ---\"' Enter",
-            all_clones
-        ));
+        let mut all_clones = clone_cmds.join(" && ");
+        all_clones.push_str("; echo \"--- repos ready ---\"");
+        let agent_cmd = match agent {
+            AgentKind::Claude if anthropic_api_key.is_some() || claude_oauth_token.is_some() => {
+                Some("claude")
+            }
+            AgentKind::Claude => Some("echo 'Claude selected, but no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN was injected.'"),
+            AgentKind::Codex if codex_auth_available => Some("codex"),
+            AgentKind::Codex => Some("echo 'Codex selected, but no host Codex auth or OPENAI_API_KEY was available.'"),
+        };
+        if let Some(agent_cmd) = agent_cmd {
+            all_clones.push_str("; ");
+            all_clones.push_str(agent_cmd);
+        }
+        lines.push(format!("  tmux send-keys -t main '{}' Enter", all_clones));
+    } else {
+        let agent_cmd = match agent {
+            AgentKind::Claude if anthropic_api_key.is_some() || claude_oauth_token.is_some() => {
+                Some("claude")
+            }
+            AgentKind::Claude => Some("echo 'Claude selected, but no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN was injected.'"),
+            AgentKind::Codex if codex_auth_available => Some("codex"),
+            AgentKind::Codex => Some("echo 'Codex selected, but no host Codex auth or OPENAI_API_KEY was available.'"),
+        };
+        if let Some(agent_cmd) = agent_cmd {
+            lines.push(format!("  tmux send-keys -t main '{}' Enter", agent_cmd));
+        }
     }
 
     lines.push("  exec ttyd -W tmux attach -t main".to_string());

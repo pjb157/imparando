@@ -1,0 +1,8 @@
+FROM ubuntu:22.04
+
+WORKDIR /opt/imparando
+COPY dist/ /opt/imparando/
+
+ENV IMPARANDO_DATA_DIR=/opt/imparando/data
+
+CMD ["/bin/sh", "-lc", "echo 'Bundle image contents:' && find /opt/imparando -maxdepth 2 -type f | sort"]

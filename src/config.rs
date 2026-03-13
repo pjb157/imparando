@@ -32,6 +32,10 @@ pub struct Cli {
     #[arg(long)]
     pub run_dir: Option<PathBuf>,
 
+    /// Home directory to source host CLI auth files from [default: invoking user's home]
+    #[arg(long)]
+    pub auth_home: Option<PathBuf>,
+
     /// Path to SSH key injected into VMs for private repos [default: ~/.ssh/id_rsa]
     #[arg(long)]
     pub ssh_key: Option<PathBuf>,
@@ -47,6 +51,10 @@ pub struct Cli {
     /// Claude Code OAuth token injected into every VM
     #[arg(long)]
     pub claude_oauth_token: Option<String>,
+
+    /// OpenAI API key injected into every VM for Codex
+    #[arg(long)]
+    pub openai_api_key: Option<String>,
 
     /// Path to the Firecracker binary [default: /usr/local/bin/firecracker]
     #[arg(long)]
@@ -66,10 +74,12 @@ struct FileConfig {
     port: Option<u16>,
     data_dir: Option<PathBuf>,
     run_dir: Option<PathBuf>,
+    auth_home: Option<PathBuf>,
     ssh_key: Option<PathBuf>,
     max_sessions: Option<usize>,
     anthropic_api_key: Option<String>,
     claude_oauth_token: Option<String>,
+    openai_api_key: Option<String>,
     firecracker_bin: Option<PathBuf>,
     ttyd_bin: Option<PathBuf>,
 }
@@ -83,6 +93,7 @@ pub struct Config {
     pub port: u16,
     pub data_dir: PathBuf,
     pub run_dir: PathBuf,
+    pub auth_home: PathBuf,
     pub ssh_key_path: PathBuf,
     pub max_sessions: usize,
     pub kernel_path: PathBuf,
@@ -91,6 +102,7 @@ pub struct Config {
     pub ttyd_bin: PathBuf,
     pub anthropic_api_key: Option<String>,
     pub claude_oauth_token: Option<String>,
+    pub openai_api_key: Option<String>,
 }
 
 impl Config {
@@ -130,6 +142,12 @@ impl Config {
                 .or(file.run_dir)
                 .or_else(|| std::env::var("IMPARANDO_RUN_DIR").ok().map(PathBuf::from))
                 .unwrap_or_else(|| PathBuf::from("/run/imparando")),
+            auth_home: cli
+                .auth_home
+                .clone()
+                .or(file.auth_home)
+                .or_else(|| std::env::var("IMPARANDO_AUTH_HOME").ok().map(PathBuf::from))
+                .unwrap_or_else(resolve_default_auth_home),
             ssh_key_path: cli
                 .ssh_key
                 .clone()
@@ -163,11 +181,42 @@ impl Config {
                 .clone()
                 .or(file.claude_oauth_token)
                 .or_else(|| std::env::var("CLAUDE_CODE_OAUTH_TOKEN").ok()),
+            openai_api_key: cli
+                .openai_api_key
+                .clone()
+                .or(file.openai_api_key)
+                .or_else(|| std::env::var("OPENAI_API_KEY").ok()),
             kernel_path: data_dir.join("vmlinux"),
             base_rootfs_path: data_dir.join("base.ext4"),
             data_dir,
         })
     }
+}
+
+fn resolve_default_auth_home() -> PathBuf {
+    if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+        let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+        if let Some(home) = passwd
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.split(':');
+                let user = parts.next()?;
+                let _password = parts.next()?;
+                let _uid = parts.next()?;
+                let _gid = parts.next()?;
+                let _gecos = parts.next()?;
+                let home = parts.next()?;
+                Some((user, home))
+            })
+            .find_map(|(user, home)| (user == sudo_user).then(|| PathBuf::from(home)))
+        {
+            return home;
+        }
+    }
+
+    std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/root"))
 }
 
 fn resolve_required(

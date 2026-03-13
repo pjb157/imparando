@@ -66,6 +66,7 @@ sudo ./target/release/imparando --user yourname --pass yourpassword --anthropic-
 IMPARANDO_USER=yourname \
 IMPARANDO_PASS=yourpassword \
 ANTHROPIC_API_KEY=sk-ant-... \
+OPENAI_API_KEY=sk-proj-... \
 sudo ./target/release/imparando
 ```
 
@@ -82,6 +83,7 @@ user = "yourname"
 pass = "yourpassword"
 anthropic_api_key = "sk-ant-..."
 # claude_oauth_token = "..."   # alternative to anthropic_api_key
+# openai_api_key = "sk-proj-..." # for Codex sessions
 port = 8080
 # data_dir = "/var/lib/imparando"
 # run_dir  = "/run/imparando"
@@ -96,9 +98,11 @@ port = 8080
 | `pass` / `--pass` | `IMPARANDO_PASS` | — | Dashboard password (required) |
 | `anthropic_api_key` / `--anthropic-api-key` | `ANTHROPIC_API_KEY` | — | Injected into every VM at boot |
 | `claude_oauth_token` / `--claude-oauth-token` | `CLAUDE_CODE_OAUTH_TOKEN` | — | OAuth token alternative to API key |
+| `openai_api_key` / `--openai-api-key` | `OPENAI_API_KEY` | — | Injected into every VM at boot for Codex |
 | `port` / `--port` | `IMPARANDO_PORT` | `8080` | Port to listen on |
 | `data_dir` / `--data-dir` | `IMPARANDO_DATA_DIR` | `/var/lib/imparando` | Base image and overlays |
 | `run_dir` / `--run-dir` | `IMPARANDO_RUN_DIR` | `/run/imparando` | Firecracker sockets, per-session state |
+| `auth_home` / `--auth-home` | `IMPARANDO_AUTH_HOME` | invoking user's home | Host home dir used to source Claude/Codex subscription auth files |
 | `ssh_key` / `--ssh-key` | `IMPARANDO_SSH_KEY` | `~/.ssh/id_rsa` | Host SSH key injected for private repos |
 | `max_sessions` / `--max-sessions` | `IMPARANDO_MAX_SESSIONS` | `10` | Max concurrent VMs |
 | `firecracker_bin` / `--firecracker-bin` | `FIRECRACKER_BIN` | `/usr/local/bin/firecracker` | Path to firecracker binary |
@@ -108,13 +112,146 @@ port = 8080
 1. Click **+ New Session** in the dashboard
 2. Give it a name
 3. Add repo URLs (one per line — `https://` or `git@` format)
-4. Choose vCPUs (1–4) and memory (512MB–4GB)
-5. Check **Private repos** if any repos need SSH access
-6. Click **Create** — the VM boots and Claude Code starts automatically
+4. Choose an agent (`Claude` or `Codex`)
+5. Choose vCPUs (1–4) and memory (512MB–4GB)
+6. Check **Private repos** if any repos need SSH access
+7. Click **Create** — the VM boots, clones repos, and starts the selected agent if credentials were injected
 
 ## Accessing the terminal
 
-Click **Open** on any running session. You get a full terminal connected to Claude Code inside the VM. Type prompts directly, see output in real time. Works on mobile too — tap the terminal to bring up the keyboard.
+Click **Open** on any running session. You get a full terminal connected to the VM inside the browser. Works on mobile too — tap the terminal to bring up the keyboard.
+
+Browser-based login flows are a poor fit for remote web terminals because OAuth callbacks target the browser's local machine, not the microVM. Prefer injecting credentials at boot:
+
+- Claude: `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`
+- Codex: `OPENAI_API_KEY`
+
+Subscription-backed auth is also supported through host-side login reuse:
+
+- Claude subscription: run `claude setup-token` or `claude auth login` once on the host. Imparando will copy `~/.claude/.credentials.json` and `~/.claude.json` into Claude VMs when no explicit Claude API key/token is configured.
+- Codex / ChatGPT subscription: run `codex login` once on the host. Imparando will copy `~/.codex/auth.json` and `~/.codex/config.toml` into Codex VMs when no `OPENAI_API_KEY` is configured.
+
+This keeps billing on your subscription-backed local login rather than requiring API keys for every session.
+
+## CI bundles
+
+GitHub Actions can build a distributable bundle and publish it to GHCR:
+
+- Workflow: [.github/workflows/bundle.yml](/home/peter/imparando/.github/workflows/bundle.yml)
+- Release workflow: [.github/workflows/release.yml](/home/peter/imparando/.github/workflows/release.yml)
+- Bundle image Dockerfile: [Dockerfile.bundle](/home/peter/imparando/Dockerfile.bundle)
+- Installer: [scripts/install-bundle.sh](/home/peter/imparando/scripts/install-bundle.sh)
+
+The workflow builds:
+
+- `target/release/imparando`
+- `/var/lib/imparando/vmlinux`
+- `/var/lib/imparando/ttyd`
+- `/var/lib/imparando/base.ext4`
+
+It uploads a tarball artifact and pushes `ghcr.io/<owner>/<repo>/bundle:latest`.
+
+## Releases
+
+Release versioning is driven by the Cargo package version in [Cargo.toml](/home/peter/imparando/Cargo.toml).
+
+To publish a release:
+
+1. Bump `version` in [Cargo.toml](/home/peter/imparando/Cargo.toml)
+2. Commit the change
+3. Create and push a matching git tag, for example:
+
+```bash
+git tag v0.1.0
+git push origin main --tags
+```
+
+The release workflow will:
+
+- verify `Cargo.toml` matches the git tag
+- build the release binary and VM assets
+- publish `imparando-bundle-vX.Y.Z-linux-amd64.tar.gz`
+- publish a `.sha256` checksum file
+- create a GitHub Release
+- push GHCR tags like `ghcr.io/<owner>/<repo>/bundle:vX.Y.Z`, `ghcr.io/<owner>/<repo>/bundle:X.Y`, and `latest`
+
+## Installing a bundle
+
+After downloading a release tarball, install it with:
+
+```bash
+sudo ./scripts/install-bundle.sh ./imparando-bundle-v0.1.0-linux-amd64.tar.gz
+```
+
+Or directly from a GitHub release URL:
+
+```bash
+sudo ./scripts/install-bundle.sh \
+  https://github.com/OWNER/REPO/releases/download/v0.1.0/imparando-bundle-v0.1.0-linux-amd64.tar.gz
+```
+
+By default this installs under `/opt/imparando`, updates `/opt/imparando/current`, and symlinks `/usr/local/bin/imparando`.
+
+## Running as a service
+
+For a resilient host setup, run imparando under `systemd` rather than from an SSH shell.
+
+1. Install the bundle:
+
+```bash
+sudo ./scripts/install-bundle.sh ./imparando-bundle-v0.1.0-linux-amd64.tar.gz
+```
+
+2. Create config and environment directories:
+
+```bash
+sudo mkdir -p /etc/imparando
+```
+
+3. Write `/etc/imparando/config.toml`:
+
+```toml
+user = "yourname"
+pass = "yourpassword"
+port = 8080
+data_dir = "/opt/imparando/current/data"
+run_dir = "/run/imparando"
+auth_home = "/home/peter"
+```
+
+4. Write `/etc/imparando/imparando.env` for any secrets you want injected:
+
+```bash
+ANTHROPIC_API_KEY=...
+OPENAI_API_KEY=...
+CLAUDE_CODE_OAUTH_TOKEN=...
+RUST_LOG=imparando=info,tower_http=info
+```
+
+If you rely on host subscription-backed login reuse instead of API keys, `auth_home` must point at the user home that contains `~/.claude` and `~/.codex`.
+
+5. Install the unit:
+
+```bash
+sudo cp systemd/imparando.service /etc/systemd/system/imparando.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now imparando
+```
+
+6. Check status and logs:
+
+```bash
+sudo systemctl status imparando
+sudo journalctl -u imparando -f
+```
+
+This gives you:
+
+- startup on boot
+- restart after crashes
+- independence from your SSH session
+
+Because active sessions live under `/run/imparando`, a full host reboot will still terminate currently running microVMs. The service itself will come back automatically, but in-flight VM sessions are not yet persisted across host reboots.
 
 ## Private repos
 
