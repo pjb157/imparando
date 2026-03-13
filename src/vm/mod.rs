@@ -1,4 +1,5 @@
 pub mod firecracker;
+pub mod github;
 pub mod network;
 pub mod overlay;
 pub mod proxy;
@@ -13,6 +14,7 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use firecracker::FirecrackerClient;
+use github::{create_installation_token, is_github_repo_url};
 use network::NetworkManager;
 use overlay::OverlayManager;
 
@@ -277,14 +279,31 @@ impl SessionManager {
             None
         };
 
+        let github_token = if session.repos.iter().any(|repo| is_github_repo_url(repo)) {
+            match (
+                self.config.github_app_id,
+                self.config.github_installation_id,
+                self.config.github_app_private_key.as_deref(),
+            ) {
+                (Some(app_id), Some(installation_id), Some(private_key_path)) => Some(
+                    create_installation_token(app_id, installation_id, private_key_path).await?,
+                ),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         OverlayManager::create_overlay(
             &self.config.base_rootfs_path,
             &overlay_path,
             &self.config.ttyd_bin,
             &self.config.auth_home,
+            &id.to_string(),
             &session.repos,
             session.agent,
             ssh_key.as_deref(),
+            github_token.as_deref(),
             &vm_ip,
             &gw_ip,
             self.config.anthropic_api_key.as_deref(),
@@ -341,7 +360,7 @@ impl SessionManager {
             fc.start().await
         }.await;
 
-        if let Err(ref e) = config_result {
+        if config_result.is_err() {
             let stderr = tokio::fs::read_to_string(&stderr_log).await.unwrap_or_default();
             if !stderr.is_empty() {
                 tracing::error!(session_id = %id, "Firecracker stderr:\n{stderr}");

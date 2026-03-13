@@ -84,6 +84,9 @@ pass = "yourpassword"
 anthropic_api_key = "sk-ant-..."
 # claude_oauth_token = "..."   # alternative to anthropic_api_key
 # openai_api_key = "sk-proj-..." # for Codex sessions
+# github_app_id = 123456
+# github_installation_id = 78901234
+# github_app_private_key = "/etc/imparando/github-app.pem"
 port = 8080
 # data_dir = "/var/lib/imparando"
 # run_dir  = "/run/imparando"
@@ -99,6 +102,9 @@ port = 8080
 | `anthropic_api_key` / `--anthropic-api-key` | `ANTHROPIC_API_KEY` | — | Injected into every VM at boot |
 | `claude_oauth_token` / `--claude-oauth-token` | `CLAUDE_CODE_OAUTH_TOKEN` | — | OAuth token alternative to API key |
 | `openai_api_key` / `--openai-api-key` | `OPENAI_API_KEY` | — | Injected into every VM at boot for Codex |
+| `github_app_id` / `--github-app-id` | `GITHUB_APP_ID` | — | GitHub App ID used to mint installation tokens |
+| `github_installation_id` / `--github-installation-id` | `GITHUB_INSTALLATION_ID` | — | GitHub App installation ID |
+| `github_app_private_key` / `--github-app-private-key` | `GITHUB_APP_PRIVATE_KEY` | — | Path to GitHub App private key PEM |
 | `port` / `--port` | `IMPARANDO_PORT` | `8080` | Port to listen on |
 | `data_dir` / `--data-dir` | `IMPARANDO_DATA_DIR` | `/var/lib/imparando` | Base image and overlays |
 | `run_dir` / `--run-dir` | `IMPARANDO_RUN_DIR` | `/run/imparando` | Firecracker sockets, per-session state |
@@ -132,6 +138,25 @@ Subscription-backed auth is also supported through host-side login reuse:
 - Codex / ChatGPT subscription: run `codex login` once on the host. Imparando will copy `~/.codex/auth.json` and `~/.codex/config.toml` into Codex VMs when no `OPENAI_API_KEY` is configured.
 
 This keeps billing on your subscription-backed local login rather than requiring API keys for every session.
+
+## Dangerous Agent Mode With Limited Git Writes
+
+Auto-started Claude and Codex sessions now launch in dangerous/no-approval mode inside the VM.
+
+To avoid giving those agents your personal Git identity, prefer GitHub App credentials over SSH keys:
+
+- configure `github_app_id`, `github_installation_id`, and `github_app_private_key`
+- protect `main` in GitHub so direct pushes are blocked and PRs are required
+
+When a GitHub App is configured, GitHub repos are cloned over HTTPS with a short-lived installation token and each repo is moved onto a per-session branch:
+
+```text
+imparando/<session-id>
+```
+
+Imparando also sets the default push refspec so plain `git push` targets that branch instead of `main`.
+
+This does not stop the agent from creating local commits. The hard enforcement is on the GitHub side via branch protection.
 
 ## CI bundles
 
@@ -225,6 +250,9 @@ auth_home = "/home/peter"
 ANTHROPIC_API_KEY=...
 OPENAI_API_KEY=...
 CLAUDE_CODE_OAUTH_TOKEN=...
+GITHUB_APP_ID=123456
+GITHUB_INSTALLATION_ID=78901234
+GITHUB_APP_PRIVATE_KEY=/etc/imparando/github-app.pem
 RUST_LOG=imparando=info,tower_http=info
 ```
 

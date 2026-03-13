@@ -32,9 +32,11 @@ impl OverlayManager {
         overlay_path: &Path,
         ttyd_bin: &Path,
         auth_home: &Path,
+        session_id: &str,
         repos: &[String],
         agent: AgentKind,
         ssh_key: Option<&str>,
+        github_token: Option<&str>,
         vm_ip: &str,
         gw_ip: &str,
         anthropic_api_key: Option<&str>,
@@ -53,9 +55,11 @@ impl OverlayManager {
         tokio::fs::copy(base_path, overlay_path).await?;
 
         let script = build_startup_script(
+            session_id,
             repos,
             agent,
             ssh_key,
+            github_token,
             vm_ip,
             gw_ip,
             anthropic_api_key,
@@ -142,10 +146,36 @@ gitlab.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAA
     }
 }
 
+fn sh_single_quote(s: &str) -> String {
+    s.replace('\'', "'\"'\"'")
+}
+
 fn read_codex_api_key_from_host(host_home: &Path) -> Option<String> {
     let raw = std::fs::read_to_string(host_home.join(".codex/auth.json")).ok()?;
     let data: serde_json::Value = serde_json::from_str(&raw).ok()?;
     data.get("OPENAI_API_KEY")?.as_str().map(str::to_owned)
+}
+
+fn github_repo_path(url: &str) -> Option<&str> {
+    url.strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("http://github.com/"))
+        .or_else(|| url.strip_prefix("git@github.com:"))
+}
+
+fn repo_dir_name(url: &str) -> String {
+    let path = github_repo_path(url).unwrap_or(url);
+    path.rsplit('/')
+        .next()
+        .unwrap_or("repo")
+        .trim_end_matches(".git")
+        .to_string()
+}
+
+fn clone_url_for_repo(url: &str, github_token: Option<&str>) -> String {
+    match (github_repo_path(url), github_token) {
+        (Some(path), Some(token)) => format!("https://x-access-token:{token}@github.com/{path}"),
+        _ => url.to_string(),
+    }
 }
 
 async fn copy_if_exists(src: &Path, dst: &Path) -> Result<()> {
@@ -196,9 +226,11 @@ async fn copy_codex_auth(host_home: &Path, mount_dir: &Path) -> Result<()> {
 }
 
 fn build_startup_script(
+    session_id: &str,
     repos: &[String],
     agent: AgentKind,
     ssh_key: Option<&str>,
+    github_token: Option<&str>,
     vm_ip: &str,
     gw_ip: &str,
     anthropic_api_key: Option<&str>,
@@ -281,6 +313,11 @@ fn build_startup_script(
     }
 
     lines.push("export TERM=xterm-256color".to_string());
+    lines.push(format!("export IMPARANDO_SESSION_BRANCH='imparando/{session_id}'"));
+    if let Some(token) = github_token {
+        let escaped = token.replace('\'', "'\"'\"'");
+        lines.push(format!("export GITHUB_TOKEN='{escaped}'"));
+    }
     lines.push(String::new());
 
     lines.push("# Start PostgreSQL".to_string());
@@ -305,16 +342,36 @@ fn build_startup_script(
         // Clone repos inside a background script that runs in tmux
         // so the user can see progress in the terminal.
         let clone_cmds: Vec<String> = repos.iter().map(|repo| {
-            format!("git clone '{repo}' || echo 'WARNING: failed to clone {repo}'")
+            let clone_url = clone_url_for_repo(repo, github_token);
+            let repo_dir = repo_dir_name(repo);
+            let branch = format!("imparando/{session_id}");
+            format!(
+                "git clone '{}' '{}' || echo 'WARNING: failed to clone {}'; \
+                if [ -d '{}' ]; then \
+                  cd '{}' && \
+                  git fetch origin main && \
+                  git checkout -B '{}' origin/main && \
+                  git config push.default current && \
+                  git config remote.origin.push 'HEAD:refs/heads/{}' && \
+                  cd /root/workspace; \
+                fi",
+                sh_single_quote(&clone_url),
+                sh_single_quote(&repo_dir),
+                sh_single_quote(repo),
+                sh_single_quote(&repo_dir),
+                sh_single_quote(&repo_dir),
+                sh_single_quote(&branch),
+                sh_single_quote(&branch),
+            )
         }).collect();
         let mut all_clones = clone_cmds.join(" && ");
         all_clones.push_str("; echo \"--- repos ready ---\"");
         let agent_cmd = match agent {
             AgentKind::Claude if anthropic_api_key.is_some() || claude_oauth_token.is_some() => {
-                Some("claude")
+                Some("claude --dangerously-skip-permissions")
             }
             AgentKind::Claude => Some("echo 'Claude selected, but no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN was injected.'"),
-            AgentKind::Codex if codex_auth_available => Some("codex"),
+            AgentKind::Codex if codex_auth_available => Some("codex --dangerously-bypass-approvals-and-sandbox"),
             AgentKind::Codex => Some("echo 'Codex selected, but no host Codex auth or OPENAI_API_KEY was available.'"),
         };
         if let Some(agent_cmd) = agent_cmd {
@@ -325,10 +382,10 @@ fn build_startup_script(
     } else {
         let agent_cmd = match agent {
             AgentKind::Claude if anthropic_api_key.is_some() || claude_oauth_token.is_some() => {
-                Some("claude")
+                Some("claude --dangerously-skip-permissions")
             }
             AgentKind::Claude => Some("echo 'Claude selected, but no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN was injected.'"),
-            AgentKind::Codex if codex_auth_available => Some("codex"),
+            AgentKind::Codex if codex_auth_available => Some("codex --dangerously-bypass-approvals-and-sandbox"),
             AgentKind::Codex => Some("echo 'Codex selected, but no host Codex auth or OPENAI_API_KEY was available.'"),
         };
         if let Some(agent_cmd) = agent_cmd {

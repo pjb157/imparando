@@ -56,6 +56,18 @@ pub struct Cli {
     #[arg(long)]
     pub openai_api_key: Option<String>,
 
+    /// GitHub App ID used to mint installation tokens for repo access
+    #[arg(long)]
+    pub github_app_id: Option<u64>,
+
+    /// GitHub App installation ID used to mint installation tokens
+    #[arg(long)]
+    pub github_installation_id: Option<u64>,
+
+    /// Path to the GitHub App private key PEM file
+    #[arg(long)]
+    pub github_app_private_key: Option<PathBuf>,
+
     /// Path to the Firecracker binary [default: /usr/local/bin/firecracker]
     #[arg(long)]
     pub firecracker_bin: Option<PathBuf>,
@@ -80,6 +92,9 @@ struct FileConfig {
     anthropic_api_key: Option<String>,
     claude_oauth_token: Option<String>,
     openai_api_key: Option<String>,
+    github_app_id: Option<u64>,
+    github_installation_id: Option<u64>,
+    github_app_private_key: Option<PathBuf>,
     firecracker_bin: Option<PathBuf>,
     ttyd_bin: Option<PathBuf>,
 }
@@ -103,6 +118,9 @@ pub struct Config {
     pub anthropic_api_key: Option<String>,
     pub claude_oauth_token: Option<String>,
     pub openai_api_key: Option<String>,
+    pub github_app_id: Option<u64>,
+    pub github_installation_id: Option<u64>,
+    pub github_app_private_key: Option<PathBuf>,
 }
 
 impl Config {
@@ -186,6 +204,19 @@ impl Config {
                 .clone()
                 .or(file.openai_api_key)
                 .or_else(|| std::env::var("OPENAI_API_KEY").ok()),
+            github_app_id: cli
+                .github_app_id
+                .or(file.github_app_id)
+                .or_else(|| std::env::var("GITHUB_APP_ID").ok()?.parse().ok()),
+            github_installation_id: cli
+                .github_installation_id
+                .or(file.github_installation_id)
+                .or_else(|| std::env::var("GITHUB_INSTALLATION_ID").ok()?.parse().ok()),
+            github_app_private_key: cli
+                .github_app_private_key
+                .clone()
+                .or(file.github_app_private_key)
+                .or_else(|| std::env::var("GITHUB_APP_PRIVATE_KEY").ok().map(PathBuf::from)),
             kernel_path: data_dir.join("vmlinux"),
             base_rootfs_path: data_dir.join("base.ext4"),
             data_dir,
