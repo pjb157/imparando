@@ -121,11 +121,16 @@ port = 8080
 
 1. Click **+ New Session** in the dashboard
 2. Give it a name
-3. Add repo URLs (one per line — `https://` or `git@` format)
-4. Choose an agent (`Claude` or `Codex`)
-5. Choose vCPUs (1–4) and memory (512MB–4GB)
-6. Check **Private repos** if any repos need SSH access
-7. Click **Create** — the VM boots, clones repos, and starts the selected agent if credentials were injected
+3. Choose an image profile
+4. Add repo URLs (one per line — `https://` or `git@` format)
+5. Choose an agent (`Claude` or `Codex`)
+6. Choose vCPUs (1–4) and memory (512MB–8GB)
+7. Check **Private repos** if any repos need SSH access
+8. Click **Create** — the VM boots, clones repos, and starts the selected agent if credentials were injected
+
+Built-in profile:
+
+- `ts-rust-postgres`: TypeScript, Rust, PostgreSQL, Node.js, pnpm, just, and common development tooling with a `50 GiB` sparse rootfs image for build-heavy application work.
 
 ## Accessing the terminal
 
@@ -317,3 +322,5 @@ Admission control is enforced on session creation using both:
 - total active memory budget
 
 By default, Imparando conservatively allows up to `20` total vCPUs and `51200 MiB` (`50 GiB`) of active guest RAM on the host.
+
+Profile selection is exposed through the API and UI. The current implementation ships one built-in profile, `ts-rust-postgres`, backed by the standard `base.ext4`. Additional profiles can be added later by defining new profile metadata and rootfs paths.

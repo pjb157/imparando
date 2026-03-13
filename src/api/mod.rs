@@ -18,6 +18,7 @@ pub fn router(manager: SharedSessionManager, user: String, pass: String) -> Rout
     let api = Router::new()
         .route("/api/sessions", get(sessions::list_sessions))
         .route("/api/capacity", get(sessions::get_capacity))
+        .route("/api/profiles", get(sessions::list_profiles))
         .route("/api/sessions", post(sessions::create_session))
         .route("/api/sessions/:id", get(sessions::get_session))
         .route("/api/sessions/:id/stop", put(sessions::stop_session))

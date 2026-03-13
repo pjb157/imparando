@@ -229,7 +229,7 @@ unmount_chroot_fs
 success "Chroot pseudo-filesystems unmounted."
 
 # Pack chroot into ext4 image
-SIZE=8192
+SIZE=51200
 info "Creating ext4 image of ${SIZE}MB at /var/lib/imparando/base.ext4..."
 truncate -s "${SIZE}M" /var/lib/imparando/base.ext4
 mkfs.ext4 /var/lib/imparando/base.ext4

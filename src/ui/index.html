@@ -732,6 +732,10 @@
         </div>
         <div class="form-row">
           <div class="form-group">
+            <label for="f-profile">Profile</label>
+            <select id="f-profile"></select>
+          </div>
+          <div class="form-group">
             <label for="f-agent">Agent</label>
             <select id="f-agent">
               <option value="claude" selected>Claude</option>
@@ -756,6 +760,10 @@
               <option value="8192">8192 MB</option>
             </select>
           </div>
+        </div>
+        <div class="form-group">
+          <label>Profile Details</label>
+          <div id="profile-hint" style="color:var(--text-muted);font-size:12px;font-family:ui-monospace, 'SFMono-Regular', Menlo, monospace;"></div>
         </div>
         <div class="form-group">
           <div class="checkbox-group">
@@ -787,6 +795,7 @@
   // ── State ──────────────────────────────────────────────────────────────
   let sessions = [];
   let capacity = null;
+  let profiles = [];
   let refreshTimer = null;
   let currentSessionId = null;
   let term = null;
@@ -944,6 +953,8 @@
     try {
       sessions = await apiFetch('/api/sessions');
       capacity = await apiFetch('/api/capacity');
+      profiles = await apiFetch('/api/profiles');
+      renderProfiles();
       renderSessions();
       renderCapacity();
     } catch (e) {
@@ -1035,6 +1046,44 @@
       remainingSessions + ' session slots free.';
   }
 
+  function renderProfiles() {
+    var select = document.getElementById('f-profile');
+    var hint = document.getElementById('profile-hint');
+    if (!select || !hint || !profiles) {
+      return;
+    }
+
+    select.innerHTML = profiles.map(function(p) {
+      return '<option value="' + escHtml(p.kind) + '">' + escHtml(p.name) + '</option>';
+    }).join('');
+
+    applySelectedProfileDefaults();
+  }
+
+  function applySelectedProfileDefaults() {
+    var select = document.getElementById('f-profile');
+    var hint = document.getElementById('profile-hint');
+    if (!select || !hint || !profiles || profiles.length === 0) {
+      return;
+    }
+
+    var profile = profiles.find(function(p) { return p.kind === select.value; }) || profiles[0];
+    if (!profile) {
+      return;
+    }
+
+    var vcpuSelect = document.getElementById('f-vcpus');
+    var memorySelect = document.getElementById('f-memory');
+    if (vcpuSelect) vcpuSelect.value = String(profile.default_vcpus);
+    if (memorySelect) memorySelect.value = String(profile.default_memory_mb);
+
+    hint.textContent =
+      profile.description + ' | default ' +
+      profile.default_vcpus + ' vCPU, ' +
+      formatMemoryMb(profile.default_memory_mb) + ' RAM, ' +
+      formatMemoryMb(profile.disk_mb) + ' disk';
+  }
+
   function renderSessions() {
     var container = document.getElementById('session-list');
     if (!sessions || sessions.length === 0) {
@@ -1055,6 +1104,8 @@
 
       var canOpen = s.status === 'running';
       var agent = s.agent === 'codex' ? 'Codex' : 'Claude';
+      var profile = profiles.find(function(p) { return p.kind === s.image_profile; });
+      var profileName = profile ? profile.name : (s.image_profile || 'unknown');
 
       return '<div class="session-card" data-id="' + escHtml(s.id) + '"' +
         (canOpen ? ' onclick="openSession(\'' + escHtml(s.id) + '\')"' : '') + '>' +
@@ -1069,6 +1120,7 @@
         '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteSession(\'' + escHtml(s.id) + '\')">Delete</button>' +
         '</div></div>' +
         '<div class="session-meta">' +
+        '<span>' + escHtml(profileName) + '</span>' +
         '<span>' + escHtml(agent) + '</span>' +
         '<span>' + escHtml(String(s.vcpus || '?')) + ' vCPU</span>' +
         '<span>' + escHtml(String(s.memory_mb || '?')) + ' MB RAM</span>' +
@@ -1108,6 +1160,7 @@
   // ── New Session modal ──────────────────────────────────────────────────
   document.getElementById('new-session-btn').addEventListener('click', openModal);
   document.getElementById('modal-cancel-btn').addEventListener('click', closeModal);
+  document.getElementById('f-profile').addEventListener('change', applySelectedProfileDefaults);
   document.getElementById('new-session-modal').addEventListener('click', function (e) {
     if (e.target === this) closeModal();
   });
@@ -1116,6 +1169,7 @@
     document.getElementById('new-session-form').reset();
     document.getElementById('form-error').textContent = '';
     document.getElementById('new-session-modal').classList.add('open');
+    renderProfiles();
     renderCapacity();
     document.getElementById('f-name').focus();
   }
@@ -1131,6 +1185,7 @@
 
     var name = document.getElementById('f-name').value.trim();
     var reposRaw = document.getElementById('f-repos').value.trim();
+    var image_profile = document.getElementById('f-profile').value;
     var agent = document.getElementById('f-agent').value;
     var vcpus = parseInt(document.getElementById('f-vcpus').value, 10);
     var memory_mb = parseInt(document.getElementById('f-memory').value, 10);
@@ -1149,7 +1204,7 @@
     try {
       await apiFetch('/api/sessions', {
         method: 'POST',
-        body: JSON.stringify({ name: name, repos: repos, agent: agent, vcpus: vcpus, memory_mb: memory_mb, private_repos: private_repos }),
+        body: JSON.stringify({ name: name, repos: repos, image_profile: image_profile, agent: agent, vcpus: vcpus, memory_mb: memory_mb, private_repos: private_repos }),
       });
       closeModal();
       showToast('Session created!', 'success');

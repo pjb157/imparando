@@ -3,6 +3,8 @@ use clap::Parser;
 use serde::Deserialize;
 use std::path::PathBuf;
 
+use crate::profiles::{self, ImageProfileDefinition, ImageProfileKind, ResolvedImageProfile};
+
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 #[derive(Parser, Debug)]
@@ -243,6 +245,14 @@ impl Config {
             base_rootfs_path: data_dir.join("base.ext4"),
             data_dir,
         })
+    }
+
+    pub fn list_image_profiles(&self) -> Vec<ImageProfileDefinition> {
+        profiles::list_profiles()
+    }
+
+    pub fn resolve_image_profile(&self, kind: ImageProfileKind) -> ResolvedImageProfile {
+        profiles::resolve_profile(&self.data_dir, kind)
     }
 }
 

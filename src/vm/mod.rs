@@ -13,6 +13,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::profiles::{ImageProfileDefinition, ImageProfileKind};
 use firecracker::FirecrackerClient;
 use github::{create_installation_token, is_github_repo_url};
 use network::NetworkManager;
@@ -50,6 +51,7 @@ pub struct Session {
     pub name: String,
     pub status: SessionStatus,
     pub repos: Vec<String>,
+    pub image_profile: ImageProfileKind,
     pub agent: AgentKind,
     pub vcpus: u8,
     pub memory_mb: u32,
@@ -74,6 +76,8 @@ pub struct Capacity {
 pub struct CreateSessionRequest {
     pub name: String,
     pub repos: Vec<String>,
+    #[serde(default)]
+    pub image_profile: ImageProfileKind,
     #[serde(default)]
     pub agent: AgentKind,
     pub vcpus: u8,
@@ -140,6 +144,10 @@ impl SessionManager {
         }
     }
 
+    pub fn list_image_profiles(&self) -> Vec<ImageProfileDefinition> {
+        self.config.list_image_profiles()
+    }
+
     // ── Session lifecycle ─────────────────────────────────────────────────────
 
     pub async fn create_session(
@@ -191,6 +199,7 @@ impl SessionManager {
                 name: req.name,
                 status: SessionStatus::Creating,
                 repos: req.repos,
+                image_profile: req.image_profile,
                 agent: req.agent,
                 vcpus: requested_vcpus as u8,
                 memory_mb: requested_memory_mb,
@@ -333,6 +342,7 @@ impl SessionManager {
             .ok_or_else(|| anyhow::anyhow!("Session {id} disappeared before boot"))?;
 
         let vm_index = self.assign_vm_index().await?;
+        let profile = self.config.resolve_image_profile(session.image_profile);
         let tap_name = format!("tap{vm_index}");
         let vm_ip = format!("172.16.{vm_index}.2");
         let gw_ip = format!("172.16.{vm_index}.1");
@@ -374,7 +384,7 @@ impl SessionManager {
         };
 
         OverlayManager::create_overlay(
-            &self.config.base_rootfs_path,
+            &profile.base_rootfs_path,
             &overlay_path,
             &self.config.ttyd_bin,
             &self.config.auth_home,

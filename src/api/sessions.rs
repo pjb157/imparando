@@ -32,6 +32,12 @@ pub async fn get_capacity(
     Json(capacity)
 }
 
+pub async fn list_profiles(
+    State(manager): State<SharedSessionManager>,
+) -> impl IntoResponse {
+    Json(manager.list_image_profiles())
+}
+
 pub async fn create_session(
     State(manager): State<SharedSessionManager>,
     Json(req): Json<CreateSessionRequest>,
