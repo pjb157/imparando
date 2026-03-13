@@ -92,6 +92,8 @@ port = 8080
 # run_dir  = "/run/imparando"
 # ssh_key  = "/root/.ssh/id_rsa"
 # max_sessions = 10
+# max_total_vcpus = 20
+# max_total_memory_mb = 51200
 # firecracker_bin = "/usr/local/bin/firecracker"
 ```
 
@@ -111,6 +113,8 @@ port = 8080
 | `auth_home` / `--auth-home` | `IMPARANDO_AUTH_HOME` | invoking user's home | Host home dir used to source Claude/Codex subscription auth files |
 | `ssh_key` / `--ssh-key` | `IMPARANDO_SSH_KEY` | `~/.ssh/id_rsa` | Host SSH key injected for private repos |
 | `max_sessions` / `--max-sessions` | `IMPARANDO_MAX_SESSIONS` | `10` | Max concurrent VMs |
+| `max_total_vcpus` / `--max-total-vcpus` | `IMPARANDO_MAX_TOTAL_VCPUS` | `20` | Max total vCPUs across active VMs |
+| `max_total_memory_mb` / `--max-total-memory-mb` | `IMPARANDO_MAX_TOTAL_MEMORY_MB` | `51200` | Max total RAM across active VMs in MiB |
 | `firecracker_bin` / `--firecracker-bin` | `FIRECRACKER_BIN` | `/usr/local/bin/firecracker` | Path to firecracker binary |
 
 ## Creating a session
@@ -305,3 +309,11 @@ Firecracker stderr for each VM is written to `/run/imparando/<session-id>/firecr
 ```
 
 Each VM gets its own TAP device (`tap0`–`tap9`) and a private subnet (`172.16.{n}.0/24`) with outbound internet via iptables NAT. VMs are fully isolated at the hypervisor level.
+
+Admission control is enforced on session creation using both:
+
+- `max_sessions`
+- total active `vCPU` budget
+- total active memory budget
+
+By default, Imparando conservatively allows up to `20` total vCPUs and `51200 MiB` (`50 GiB`) of active guest RAM on the host.

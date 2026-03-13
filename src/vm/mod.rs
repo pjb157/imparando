@@ -60,6 +60,16 @@ pub struct Session {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct Capacity {
+    pub max_sessions: usize,
+    pub active_sessions: usize,
+    pub max_total_vcpus: u32,
+    pub used_vcpus: u32,
+    pub max_total_memory_mb: u32,
+    pub used_memory_mb: u32,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
     pub name: String,
@@ -100,6 +110,36 @@ impl SessionManager {
         self.sessions.read().await.get(&id).cloned()
     }
 
+    pub async fn get_capacity(&self) -> Capacity {
+        let sessions = self.sessions.read().await;
+        let mut active_sessions = 0usize;
+        let mut used_vcpus = 0u32;
+        let mut used_memory_mb = 0u32;
+
+        for session in sessions.values() {
+            if matches!(
+                session.status,
+                SessionStatus::Creating
+                    | SessionStatus::Starting
+                    | SessionStatus::Running
+                    | SessionStatus::Stopping
+            ) {
+                active_sessions += 1;
+                used_vcpus += u32::from(session.vcpus);
+                used_memory_mb += session.memory_mb;
+            }
+        }
+
+        Capacity {
+            max_sessions: self.config.max_sessions,
+            active_sessions,
+            max_total_vcpus: self.config.max_total_vcpus,
+            used_vcpus,
+            max_total_memory_mb: self.config.max_total_memory_mb,
+            used_memory_mb,
+        }
+    }
+
     // ── Session lifecycle ─────────────────────────────────────────────────────
 
     pub async fn create_session(
@@ -114,14 +154,46 @@ impl SessionManager {
             if sessions.values().any(|s| s.name == req.name) {
                 bail!("A session named '{}' already exists", req.name);
             }
+            let requested_vcpus = u32::from(req.vcpus.clamp(1, 4));
+            let requested_memory_mb = req.memory_mb.clamp(512, 8192);
+            let (active_vcpus, active_memory_mb) = sessions
+                .values()
+                .filter(|s| {
+                    matches!(
+                        s.status,
+                        SessionStatus::Creating
+                            | SessionStatus::Starting
+                            | SessionStatus::Running
+                            | SessionStatus::Stopping
+                    )
+                })
+                .fold((0u32, 0u32), |(cpu, mem), s| {
+                    (cpu + u32::from(s.vcpus), mem + s.memory_mb)
+                });
+            let next_total_vcpus = active_vcpus + requested_vcpus;
+            let next_total_memory_mb = active_memory_mb + requested_memory_mb;
+            if next_total_vcpus > self.config.max_total_vcpus {
+                bail!(
+                    "vCPU budget exceeded: requested total {} > configured max {}",
+                    next_total_vcpus,
+                    self.config.max_total_vcpus
+                );
+            }
+            if next_total_memory_mb > self.config.max_total_memory_mb {
+                bail!(
+                    "Memory budget exceeded: requested total {} MiB > configured max {} MiB",
+                    next_total_memory_mb,
+                    self.config.max_total_memory_mb
+                );
+            }
             let session = Session {
                 id: Uuid::new_v4(),
                 name: req.name,
                 status: SessionStatus::Creating,
                 repos: req.repos,
                 agent: req.agent,
-                vcpus: req.vcpus.clamp(1, 4),
-                memory_mb: req.memory_mb.clamp(512, 4096),
+                vcpus: requested_vcpus as u8,
+                memory_mb: requested_memory_mb,
                 private_repos: req.private_repos,
                 created_at: Utc::now(),
                 tap_name: None,
@@ -135,7 +207,7 @@ impl SessionManager {
         let manager = Arc::clone(&self);
         let id = session.id;
         tokio::spawn(async move {
-            if let Err(e) = manager.boot_vm(id).await {
+            if let Err(e) = Arc::clone(&manager).boot_vm(id).await {
                 tracing::error!(session_id = %id, error = %e, "VM boot failed");
                 manager.set_status(id, SessionStatus::Failed, Some(e.to_string())).await;
             }
@@ -247,7 +319,14 @@ impl SessionManager {
         }
     }
 
-    async fn boot_vm(&self, id: Uuid) -> Result<()> {
+    async fn clear_runtime_info(&self, id: Uuid) {
+        if let Some(s) = self.sessions.write().await.get_mut(&id) {
+            s.tap_name = None;
+            s.vm_ip = None;
+        }
+    }
+
+    async fn boot_vm(self: Arc<Self>, id: Uuid) -> Result<()> {
         let session = self
             .get_session(id)
             .await
@@ -390,11 +469,12 @@ impl SessionManager {
 
         // 7. Watch for Firecracker exit and clean up.
         {
+            let manager = Arc::clone(&self);
             let run_dir_owned = run_dir.clone();
             let tap_name_owned = tap_name.clone();
             let overlay_owned = overlay_path.clone();
             tokio::spawn(async move {
-                let _ = child.wait().await;
+                let exit_result = child.wait().await;
                 // Log console output before cleaning up (helps debug kernel panics)
                 let console_log = run_dir_owned.join("console.log");
                 if let Ok(content) = tokio::fs::read_to_string(&console_log).await {
@@ -409,10 +489,21 @@ impl SessionManager {
                         tracing::error!(session_id = %id, "Firecracker log:\n{content}");
                     }
                 }
-                tracing::info!(session_id = %id, "Firecracker process exited");
+                match exit_result {
+                    Ok(status) => {
+                        tracing::info!(session_id = %id, ?status, "Firecracker process exited");
+                    }
+                    Err(e) => {
+                        tracing::warn!(session_id = %id, error = %e, "Failed waiting for Firecracker process");
+                    }
+                }
                 let _ = NetworkManager::teardown_tap(&tap_name_owned).await;
                 let _ = tokio::fs::remove_file(&overlay_owned).await;
                 let _ = tokio::fs::remove_dir_all(&run_dir_owned).await;
+                manager.clear_runtime_info(id).await;
+                manager
+                    .set_status(id, SessionStatus::Stopped, Some("VM exited".to_string()))
+                    .await;
             });
         }
 

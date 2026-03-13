@@ -223,6 +223,61 @@
       letter-spacing: 0.05em;
     }
 
+    .capacity-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .capacity-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .capacity-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+    }
+
+    .capacity-metric {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .capacity-metric-label {
+      color: var(--text-muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .capacity-metric-value {
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .capacity-metric-subtle {
+      color: var(--text-muted);
+      font-size: 12px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    }
+
     .session-list {
       display: flex;
       flex-direction: column;
@@ -631,6 +686,10 @@
         <h2>Sessions</h2>
         <span id="refresh-indicator" style="color:var(--text-muted);font-size:12px;"></span>
       </div>
+      <div class="capacity-card" id="capacity-card">
+        <div class="capacity-title">Host Budget</div>
+        <div class="capacity-grid" id="capacity-grid"></div>
+      </div>
       <div id="session-list" class="session-list">
         <div class="empty-state">
           <div class="spinner">Loading...</div>
@@ -691,9 +750,10 @@
             <label for="f-memory">Memory (MB)</label>
             <select id="f-memory">
               <option value="512">512 MB</option>
-              <option value="1024" selected>1024 MB</option>
-              <option value="2048">2048 MB</option>
+              <option value="1024">1024 MB</option>
+              <option value="2048" selected>2048 MB</option>
               <option value="4096">4096 MB</option>
+              <option value="8192">8192 MB</option>
             </select>
           </div>
         </div>
@@ -702,6 +762,10 @@
             <input type="checkbox" id="f-private-repos" />
             <label for="f-private-repos">Clone private repositories</label>
           </div>
+        </div>
+        <div class="form-group">
+          <label>Capacity</label>
+          <div id="capacity-hint" style="color:var(--text-muted);font-size:12px;font-family:ui-monospace, 'SFMono-Regular', Menlo, monospace;"></div>
         </div>
         <div class="form-error" id="form-error"></div>
         <div class="modal-actions">
@@ -722,6 +786,7 @@
 
   // ── State ──────────────────────────────────────────────────────────────
   let sessions = [];
+  let capacity = null;
   let refreshTimer = null;
   let currentSessionId = null;
   let term = null;
@@ -878,7 +943,9 @@
   async function loadSessions() {
     try {
       sessions = await apiFetch('/api/sessions');
+      capacity = await apiFetch('/api/capacity');
       renderSessions();
+      renderCapacity();
     } catch (e) {
       document.getElementById('session-list').innerHTML =
         '<div class="empty-state" style="color:var(--badge-failed)">Failed to load sessions: ' + escHtml(e.message) + '</div>';
@@ -924,6 +991,48 @@
     if (h > 0) return h + 'h ' + m + 'm';
     if (m > 0) return m + 'm ' + s + 's';
     return s + 's';
+  }
+
+  function formatMemoryMb(memoryMb) {
+    if (memoryMb >= 1024) {
+      var gib = memoryMb / 1024;
+      return (Math.round(gib * 10) / 10) + ' GiB';
+    }
+    return memoryMb + ' MiB';
+  }
+
+  function renderCapacity() {
+    var grid = document.getElementById('capacity-grid');
+    var hint = document.getElementById('capacity-hint');
+    if (!grid || !hint || !capacity) {
+      return;
+    }
+
+    var remainingSessions = Math.max(0, capacity.max_sessions - capacity.active_sessions);
+    var remainingVcpus = Math.max(0, capacity.max_total_vcpus - capacity.used_vcpus);
+    var remainingMemoryMb = Math.max(0, capacity.max_total_memory_mb - capacity.used_memory_mb);
+
+    grid.innerHTML =
+      '<div class="capacity-metric">' +
+      '<div class="capacity-metric-label">Sessions</div>' +
+      '<div class="capacity-metric-value">' + escHtml(String(capacity.active_sessions)) + ' / ' + escHtml(String(capacity.max_sessions)) + '</div>' +
+      '<div class="capacity-metric-subtle">' + escHtml(String(remainingSessions)) + ' free</div>' +
+      '</div>' +
+      '<div class="capacity-metric">' +
+      '<div class="capacity-metric-label">vCPU</div>' +
+      '<div class="capacity-metric-value">' + escHtml(String(capacity.used_vcpus)) + ' / ' + escHtml(String(capacity.max_total_vcpus)) + '</div>' +
+      '<div class="capacity-metric-subtle">' + escHtml(String(remainingVcpus)) + ' free</div>' +
+      '</div>' +
+      '<div class="capacity-metric">' +
+      '<div class="capacity-metric-label">Memory</div>' +
+      '<div class="capacity-metric-value">' + escHtml(formatMemoryMb(capacity.used_memory_mb)) + '</div>' +
+      '<div class="capacity-metric-subtle">' + escHtml(formatMemoryMb(remainingMemoryMb)) + ' free of ' + escHtml(formatMemoryMb(capacity.max_total_memory_mb)) + '</div>' +
+      '</div>';
+
+    hint.textContent =
+      remainingVcpus + ' vCPU free, ' +
+      formatMemoryMb(remainingMemoryMb) + ' free, ' +
+      remainingSessions + ' session slots free.';
   }
 
   function renderSessions() {
@@ -1007,6 +1116,7 @@
     document.getElementById('new-session-form').reset();
     document.getElementById('form-error').textContent = '';
     document.getElementById('new-session-modal').classList.add('open');
+    renderCapacity();
     document.getElementById('f-name').focus();
   }
 

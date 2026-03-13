@@ -6,7 +6,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::vm::{CreateSessionRequest, SharedSessionManager};
+use crate::vm::{Capacity, CreateSessionRequest, SharedSessionManager};
 
 pub async fn list_sessions(
     State(manager): State<SharedSessionManager>,
@@ -23,6 +23,13 @@ pub async fn get_session(
         Some(s) => (StatusCode::OK, Json(s)).into_response(),
         None => (StatusCode::NOT_FOUND, "Session not found").into_response(),
     }
+}
+
+pub async fn get_capacity(
+    State(manager): State<SharedSessionManager>,
+) -> impl IntoResponse {
+    let capacity: Capacity = manager.get_capacity().await;
+    Json(capacity)
 }
 
 pub async fn create_session(

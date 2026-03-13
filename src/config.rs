@@ -44,6 +44,14 @@ pub struct Cli {
     #[arg(long)]
     pub max_sessions: Option<usize>,
 
+    /// Maximum total vCPUs across non-stopped sessions [default: 20]
+    #[arg(long)]
+    pub max_total_vcpus: Option<u32>,
+
+    /// Maximum total memory across non-stopped sessions in MiB [default: 51200]
+    #[arg(long)]
+    pub max_total_memory_mb: Option<u32>,
+
     /// Anthropic API key injected into every VM
     #[arg(long)]
     pub anthropic_api_key: Option<String>,
@@ -89,6 +97,8 @@ struct FileConfig {
     auth_home: Option<PathBuf>,
     ssh_key: Option<PathBuf>,
     max_sessions: Option<usize>,
+    max_total_vcpus: Option<u32>,
+    max_total_memory_mb: Option<u32>,
     anthropic_api_key: Option<String>,
     claude_oauth_token: Option<String>,
     openai_api_key: Option<String>,
@@ -111,6 +121,8 @@ pub struct Config {
     pub auth_home: PathBuf,
     pub ssh_key_path: PathBuf,
     pub max_sessions: usize,
+    pub max_total_vcpus: u32,
+    pub max_total_memory_mb: u32,
     pub kernel_path: PathBuf,
     pub base_rootfs_path: PathBuf,
     pub firecracker_bin: PathBuf,
@@ -177,6 +189,16 @@ impl Config {
                 .or(file.max_sessions)
                 .or_else(|| std::env::var("IMPARANDO_MAX_SESSIONS").ok()?.parse().ok())
                 .unwrap_or(10),
+            max_total_vcpus: cli
+                .max_total_vcpus
+                .or(file.max_total_vcpus)
+                .or_else(|| std::env::var("IMPARANDO_MAX_TOTAL_VCPUS").ok()?.parse().ok())
+                .unwrap_or(20),
+            max_total_memory_mb: cli
+                .max_total_memory_mb
+                .or(file.max_total_memory_mb)
+                .or_else(|| std::env::var("IMPARANDO_MAX_TOTAL_MEMORY_MB").ok()?.parse().ok())
+                .unwrap_or(50 * 1024),
             firecracker_bin: cli
                 .firecracker_bin
                 .clone()
