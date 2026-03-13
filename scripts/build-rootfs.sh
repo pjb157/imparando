@@ -105,6 +105,48 @@ info "Installing @openai/codex globally..."
 chroot "$TMPDIR" npm install -g @openai/codex
 success "Codex installed."
 
+# Enable Corepack so pnpm/yarn are available without separate npm installs.
+info "Enabling Corepack..."
+chroot "$TMPDIR" corepack enable
+success "Corepack enabled."
+
+# Install general development tooling commonly needed by agents.
+info "Installing general development tooling..."
+chroot "$TMPDIR" apt-get install -y \
+  build-essential \
+  pkg-config \
+  libssl-dev \
+  libsqlite3-dev \
+  python3-pip \
+  python3-venv \
+  jq \
+  ripgrep \
+  fd-find \
+  unzip \
+  zip \
+  xz-utils
+success "General development tooling installed."
+
+# Install the latest stable Rust toolchain with rustup and expose it system-wide.
+info "Installing latest stable Rust via rustup..."
+chroot "$TMPDIR" bash -lc '
+set -e
+curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable --profile default
+cat > /etc/profile.d/rust.sh <<EOF
+export RUSTUP_HOME=/root/.rustup
+export CARGO_HOME=/root/.cargo
+export PATH=/root/.cargo/bin:\$PATH
+EOF
+ln -sf /root/.cargo/bin/cargo /usr/local/bin/cargo
+ln -sf /root/.cargo/bin/rustc /usr/local/bin/rustc
+ln -sf /root/.cargo/bin/rustfmt /usr/local/bin/rustfmt
+ln -sf /root/.cargo/bin/rustup /usr/local/bin/rustup
+ln -sf /root/.cargo/bin/clippy-driver /usr/local/bin/clippy-driver
+/root/.cargo/bin/cargo install just --locked
+ln -sf /root/.cargo/bin/just /usr/local/bin/just
+'
+success "Rust installed."
+
 # Prevent postgresql-common from trying to create a default cluster during
 # package installation; we create it explicitly below without relying on su.
 mkdir -p "$TMPDIR/etc/postgresql-common"
@@ -187,7 +229,7 @@ unmount_chroot_fs
 success "Chroot pseudo-filesystems unmounted."
 
 # Pack chroot into ext4 image
-SIZE=4096
+SIZE=8192
 info "Creating ext4 image of ${SIZE}MB at /var/lib/imparando/base.ext4..."
 truncate -s "${SIZE}M" /var/lib/imparando/base.ext4
 mkfs.ext4 /var/lib/imparando/base.ext4
