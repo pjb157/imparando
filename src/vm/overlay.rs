@@ -52,7 +52,16 @@ impl OverlayManager {
             .or_else(|| read_codex_api_key_from_host(auth_home));
         let codex_auth_available = effective_openai_api_key.is_some() || host_codex_auth_exists(auth_home);
 
-        tokio::fs::copy(base_path, overlay_path).await?;
+        run(
+            "cp",
+            &[
+                "--sparse=always",
+                "--reflink=auto",
+                base_path.to_str().unwrap(),
+                overlay_path.to_str().unwrap(),
+            ],
+        )
+        .await?;
 
         let script = build_startup_script(
             session_id,
