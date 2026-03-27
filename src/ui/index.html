@@ -1,48 +1,88 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Imparando</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNiAxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiByeD0iMyIgZmlsbD0iIzE2MWIyMiIvPjxwYXRoIGQ9Ik0yLjUgNS41TDYuNSA4IDIuNSAxMC41IiBzdHJva2U9IiMzZmI5NTAiIHN0cm9rZS13aWR0aD0iMS41IiBmaWxsPSJub25lIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48bGluZSB4MT0iOC41IiB5MT0iMTAuNSIgeDI9IjEzLjUiIHkyPSIxMC41IiBzdHJva2U9IiMzZmI5NTAiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48L3N2Zz4=" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css" />
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:          #0a0e14;
-      --bg-card:     #131920;
-      --bg-card-hover: #1a2230;
-      --bg-input:    #0d1117;
-      --bg-modal:    #131920;
-      --border:      #1e2a3a;
-      --border-hover:#2d4a6a;
-      --text:        #e6edf3;
-      --text-muted:  #6b7b8d;
-      --accent:      #58a6ff;
-      --accent-hover:#79c0ff;
-      --accent-glow: rgba(88, 166, 255, 0.15);
-      --btn-primary: #238636;
-      --btn-primary-hover: #2ea043;
-      --btn-danger:  #da3633;
-      --btn-danger-hover: #f85149;
-      --btn-neutral: #1c2433;
-      --btn-neutral-hover: #253040;
-      --badge-creating:  #6e7681;
-      --badge-starting:  #d29922;
-      --badge-running:   #3fb950;
-      --badge-stopping:  #e3b341;
-      --badge-stopped:   #484f58;
-      --badge-failed:    #f85149;
+      --bg: #f3f6fb;
+      --bg-card: #ffffff;
+      --bg-card-hover: #fbfcfe;
+      --bg-input: #f8fafc;
+      --bg-modal: #ffffff;
+      --border: rgba(15, 23, 42, 0.08);
+      --border-strong: rgba(15, 23, 42, 0.14);
+      --border-hover: rgba(14, 116, 144, 0.24);
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --text-faint: #94a3b8;
+      --accent: #0f766e;
+      --accent-hover: #115e59;
+      --accent-glow: rgba(15, 118, 110, 0.12);
+      --btn-primary: #0f766e;
+      --btn-primary-hover: #115e59;
+      --btn-primary-text: #ffffff;
+      --btn-danger: #dc2626;
+      --btn-danger-hover: #b91c1c;
+      --btn-neutral: #ffffff;
+      --btn-neutral-hover: #f8fafc;
+      --badge-creating: #64748b;
+      --badge-starting: #b45309;
+      --badge-running: #15803d;
+      --badge-stopping: #b45309;
+      --badge-stopped: #64748b;
+      --badge-failed: #dc2626;
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+      --terminal-surface: #0f172a;
+      --terminal-border: rgba(148, 163, 184, 0.18);
+      --terminal-text: #e2e8f0;
+      --terminal-muted: #94a3b8;
+    }
+
+    html[data-theme="dark"] {
+      --bg: #0b1020;
+      --bg-card: #111827;
+      --bg-card-hover: #131c2c;
+      --bg-input: #0f172a;
+      --bg-modal: #111827;
+      --border: rgba(148, 163, 184, 0.14);
+      --border-strong: rgba(148, 163, 184, 0.24);
+      --border-hover: rgba(45, 212, 191, 0.3);
+      --text: #e5edf7;
+      --text-muted: #93a4ba;
+      --text-faint: #64748b;
+      --accent: #5eead4;
+      --accent-hover: #99f6e4;
+      --accent-glow: rgba(94, 234, 212, 0.18);
+      --btn-primary: #5eead4;
+      --btn-primary-hover: #99f6e4;
+      --btn-primary-text: #0f172a;
+      --btn-danger: #f87171;
+      --btn-danger-hover: #fca5a5;
+      --btn-neutral: #111827;
+      --btn-neutral-hover: #162033;
+      --badge-creating: #94a3b8;
+      --badge-starting: #f59e0b;
+      --badge-running: #4ade80;
+      --badge-stopping: #f59e0b;
+      --badge-stopped: #64748b;
+      --badge-failed: #f87171;
+      --shadow-sm: none;
     }
 
     html, body {
       height: 100%;
       background: var(--bg);
       color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
       font-size: 14px;
       line-height: 1.5;
     }
@@ -67,7 +107,8 @@
       align-items: center;
       justify-content: center;
       flex-direction: column;
-      gap: 32px;
+      gap: 24px;
+      padding: 24px;
     }
 
     .login-brand {
@@ -78,28 +119,25 @@
     }
 
     .login-logo {
-      width: 56px;
-      height: 56px;
-      background: linear-gradient(135deg, #238636 0%, #58a6ff 100%);
-      border-radius: 14px;
+      width: 48px;
+      height: 48px;
+      background: var(--accent);
+      border-radius: 10px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 28px;
+      font-size: 24px;
       font-weight: 700;
-      color: #fff;
+      color: var(--btn-primary-text);
       font-family: ui-monospace, monospace;
-      box-shadow: 0 0 40px rgba(88, 166, 255, 0.2), 0 0 80px rgba(35, 134, 54, 0.1);
+      box-shadow: var(--shadow-sm);
     }
 
     .login-title {
-      font-size: 24px;
+      font-size: 22px;
       font-weight: 700;
       letter-spacing: -0.02em;
-      background: linear-gradient(135deg, #e6edf3 0%, #8b949e 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      color: var(--text);
     }
 
     .login-subtitle {
@@ -110,62 +148,78 @@
     .login-card {
       background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 32px;
+      border-radius: 10px;
+      padding: 24px;
       width: 100%;
-      max-width: 380px;
+      max-width: 360px;
       display: flex;
       flex-direction: column;
-      gap: 20px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      gap: 16px;
+      box-shadow: var(--shadow-sm);
     }
 
     /* ── Dashboard ── */
     #dashboard-view { overflow-y: auto; }
 
     .topbar {
-      position: sticky;
-      top: 0;
-      z-index: 10;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 24px;
-      background: rgba(19, 25, 32, 0.85);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      padding: 16px 24px;
+      background: transparent;
       border-bottom: 1px solid var(--border);
     }
 
+    .topbar-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .theme-toggle {
+      min-width: 68px;
+      justify-content: center;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
     .topbar-title {
-      font-size: 18px;
-      font-weight: 700;
+      font-size: 14px;
+      font-weight: 600;
       color: var(--text);
-      letter-spacing: -0.02em;
+      letter-spacing: -0.01em;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
     }
 
     .topbar-logo {
-      width: 28px;
-      height: 28px;
-      background: linear-gradient(135deg, #238636 0%, #58a6ff 100%);
-      border-radius: 7px;
+      width: 24px;
+      height: 24px;
+      background: var(--accent);
+      border-radius: 6px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 14px;
+      font-size: 12px;
       font-weight: 700;
-      color: #fff;
+      color: var(--btn-primary-text);
       font-family: ui-monospace, monospace;
     }
 
     .content {
-      max-width: 960px;
+      max-width: 1240px;
       margin: 0 auto;
       width: 100%;
-      padding: 24px 16px;
+      padding: 24px;
+    }
+
+    .metrics-layout {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 20px;
     }
 
     /* ── Buttons ── */
@@ -173,32 +227,47 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 7px 16px;
+      padding: 8px 14px;
       border: 1px solid var(--border);
       border-radius: 8px;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 500;
       cursor: pointer;
       transition: all 0.15s ease;
       white-space: nowrap;
       background: var(--btn-neutral);
       color: var(--text);
+      box-shadow: var(--shadow-sm);
     }
-    .btn:hover { background: var(--btn-neutral-hover); border-color: var(--border-hover); }
+    .btn:hover { background: var(--btn-neutral-hover); border-color: var(--border); }
+
+    .btn i {
+      font-size: 14px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+
+    .btn-icon {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      justify-content: center;
+      gap: 0;
+    }
 
     .btn-primary {
       background: var(--btn-primary);
-      border-color: transparent;
-      color: #fff;
+      border-color: var(--btn-primary);
+      color: var(--btn-primary-text);
     }
-    .btn-primary:hover { background: var(--btn-primary-hover); border-color: transparent; box-shadow: 0 0 20px rgba(35, 134, 54, 0.3); }
+    .btn-primary:hover { background: var(--btn-primary-hover); border-color: var(--btn-primary); }
 
     .btn-danger {
       background: transparent;
-      border-color: var(--border);
+      border-color: transparent;
       color: var(--btn-danger);
     }
-    .btn-danger:hover { background: var(--btn-danger); border-color: var(--btn-danger); color: #fff; }
+    .btn-danger:hover { background: transparent; border-color: transparent; color: var(--btn-danger-hover); }
 
     .btn-sm {
       padding: 5px 12px;
@@ -208,97 +277,99 @@
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
     /* ── Session cards ── */
-    .sessions-header {
+    .ledger-row {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 20px;
+      justify-content: center;
+      width: 100%;
     }
 
-    .sessions-header h2 {
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .capacity-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 16px 20px;
-      margin-bottom: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .capacity-title {
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .capacity-grid {
+    .ledger-values {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(var(--metric-columns, 4), minmax(0, 1fr));
+      gap: 12px 24px;
+      align-items: start;
+      width: min(100%, 980px);
     }
 
-    .capacity-metric {
-      background: var(--bg-input);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px 12px;
+    .ledger-item {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      align-items: center;
+      gap: 2px;
+      min-width: 0;
+      text-align: center;
+      position: relative;
     }
 
-    .capacity-metric-label {
+    .ledger-label {
+      color: var(--text-muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .ledger-value {
+      color: var(--text);
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .ledger-subtle {
+      display: none;
+    }
+
+    .ledger-item::after {
+      content: attr(data-hint);
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 10px);
+      transform: translateX(-50%);
+      background: var(--bg-card);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      padding: 6px 8px;
       color: var(--text-muted);
       font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .capacity-metric-value {
-      color: var(--text);
-      font-size: 18px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-    }
-
-    .capacity-metric-subtle {
-      color: var(--text-muted);
-      font-size: 12px;
       font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      white-space: nowrap;
+      box-shadow: var(--shadow-sm);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 150ms cubic-bezier(0.25, 1, 0.5, 1);
+      z-index: 20;
     }
+
+    .ledger-item:hover::after {
+      opacity: 1;
+    }
+
 
     .session-list {
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
     }
 
     .session-card {
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 10px;
-      padding: 16px 20px;
+      padding: 14px 16px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
       transition: all 0.2s ease;
       cursor: pointer;
+      box-shadow: var(--shadow-sm);
     }
     .session-card:hover {
       background: var(--bg-card-hover);
       border-color: var(--border-hover);
-      box-shadow: 0 4px 24px rgba(0,0,0,0.3);
       transform: translateY(-1px);
     }
 
@@ -311,7 +382,7 @@
     }
 
     .session-name {
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 600;
       color: var(--text);
       display: flex;
@@ -340,7 +411,7 @@
     }
 
     .status-running { color: var(--badge-running); }
-    .status-running::before { background: var(--badge-running); box-shadow: 0 0 8px var(--badge-running); }
+    .status-running::before { background: var(--badge-running); }
     .status-creating { color: var(--badge-creating); }
     .status-creating::before { background: var(--badge-creating); }
     .status-starting { color: var(--badge-starting); }
@@ -362,10 +433,14 @@
       flex-wrap: wrap;
     }
 
+    .session-actions .btn {
+      box-shadow: none;
+    }
+
     .session-meta {
       display: flex;
       flex-wrap: wrap;
-      gap: 16px;
+      gap: 12px;
       color: var(--text-muted);
       font-size: 12px;
       font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -379,19 +454,18 @@
       gap: 6px;
     }
 
-    .repo-chip {
-      background: rgba(88, 166, 255, 0.08);
-      border: 1px solid rgba(88, 166, 255, 0.15);
-      border-radius: 6px;
-      padding: 2px 10px;
+    .repo-link {
       font-size: 11px;
-      color: var(--accent);
+      color: var(--text-muted);
       font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .empty-state {
       text-align: center;
-      padding: 80px 20px;
+      padding: 64px 20px;
       color: var(--text-muted);
     }
 
@@ -408,9 +482,9 @@
       display: none;
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.75);
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
+      background: rgba(15, 23, 42, 0.24);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
       z-index: 100;
       align-items: center;
       justify-content: center;
@@ -421,16 +495,16 @@
     .modal {
       background: var(--bg-modal);
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: 10px;
       width: 100%;
-      max-width: 480px;
-      padding: 28px;
+      max-width: 520px;
+      padding: 20px;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 12px;
       max-height: 90vh;
       overflow-y: auto;
-      box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+      box-shadow: 0 24px 64px rgba(15, 23, 42, 0.16);
     }
 
     .modal-title {
@@ -532,11 +606,9 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 8px 16px;
-      background: rgba(19, 25, 32, 0.9);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      background: var(--terminal-surface);
+      border-bottom: 1px solid var(--terminal-border);
       flex-shrink: 0;
       gap: 12px;
       flex-wrap: wrap;
@@ -552,6 +624,7 @@
       font-weight: 600;
       font-size: 14px;
       font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      color: var(--terminal-text);
     }
 
     .terminal-status {
@@ -559,7 +632,7 @@
       align-items: center;
       gap: 6px;
       font-size: 11px;
-      color: var(--text-muted);
+      color: var(--terminal-muted);
     }
 
     .terminal-status-dot {
@@ -621,7 +694,7 @@
       padding: 12px 16px;
       font-size: 13px;
       color: var(--text);
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
       /* static */
       pointer-events: auto;
       max-width: 320px;
@@ -634,8 +707,10 @@
 
     /* ── Responsive ── */
     @media (max-width: 600px) {
-      .topbar { padding: 10px 12px; }
+      .topbar { padding: 12px; }
       .content { padding: 16px 12px; }
+      .ledger-values { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
+      .ledger-value { font-size: 16px; }
       .session-card { padding: 14px; }
       .form-row { grid-template-columns: 1fr; }
       .modal { padding: 20px; }
@@ -662,7 +737,9 @@
         <input type="password" id="login-password" name="password" autocomplete="current-password" required />
       </div>
       <div class="form-error" id="login-error"></div>
-      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px;">Login</button>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:10px;">
+        <i class="ph ph-sign-in"></i><span>Login</span>
+      </button>
     </form>
   </div>
 </div>
@@ -676,19 +753,26 @@
         <span class="topbar-logo">&gt;_</span>
         Imparando
       </span>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <button class="btn btn-primary" id="new-session-btn">+ New Session</button>
-        <button class="btn" id="logout-btn">Logout</button>
+      <div class="topbar-actions">
+        <button class="btn btn-icon theme-toggle" id="theme-toggle-btn" aria-label="Toggle theme" title="Toggle theme">
+          <i class="ph ph-moon"></i>
+        </button>
+        <button class="btn" id="prompts-btn"><i class="ph ph-book-open-text"></i><span>Prompts</span></button>
+        <button class="btn btn-primary" id="new-session-btn"><i class="ph ph-plus"></i><span>New Session</span></button>
+        <button class="btn" id="logout-btn"><i class="ph ph-sign-out"></i><span>Logout</span></button>
       </div>
     </div>
     <div class="content">
-      <div class="sessions-header">
-        <h2>Sessions</h2>
-        <span id="refresh-indicator" style="color:var(--text-muted);font-size:12px;"></span>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
+        <span id="refresh-indicator" style="color:var(--text-muted);font-size:12px;font-family:ui-monospace, 'SFMono-Regular', Menlo, monospace;"></span>
       </div>
-      <div class="capacity-card" id="capacity-card">
-        <div class="capacity-title">Host Budget</div>
-        <div class="capacity-grid" id="capacity-grid"></div>
+      <div class="metrics-layout">
+        <div class="ledger-row">
+          <div class="ledger-values" id="budget-grid" style="--metric-columns: 3;"></div>
+        </div>
+        <div class="ledger-row">
+          <div class="ledger-values" id="node-metrics-grid" style="--metric-columns: 4;"></div>
+        </div>
       </div>
       <div id="session-list" class="session-list">
         <div class="empty-state">
@@ -702,14 +786,14 @@
   <div id="terminal-view" class="view">
     <div class="terminal-topbar">
       <div class="terminal-topbar-left">
-        <a href="#/" class="btn btn-sm" id="back-btn">&#8592; Back</a>
+        <a href="#/" class="btn btn-sm" id="back-btn"><i class="ph ph-arrow-left"></i><span>Back</span></a>
         <span class="terminal-session-name" id="terminal-session-name">Session</span>
         <span class="terminal-status">
           <span class="terminal-status-dot" id="terminal-status-dot"></span>
           <span id="terminal-status-text">Connecting</span>
         </span>
       </div>
-      <button class="btn btn-sm btn-danger" id="terminal-stop-btn">Delete</button>
+      <button class="btn btn-sm btn-danger" id="terminal-stop-btn"><i class="ph ph-trash"></i><span>Delete</span></button>
     </div>
     <div id="terminal-container"></div>
   </div>
@@ -755,8 +839,8 @@
             <select id="f-memory">
               <option value="512">512 MB</option>
               <option value="1024">1024 MB</option>
-              <option value="2048" selected>2048 MB</option>
-              <option value="4096">4096 MB</option>
+              <option value="2048">2048 MB</option>
+              <option value="4096" selected>4096 MB</option>
               <option value="8192">8192 MB</option>
             </select>
           </div>
@@ -777,11 +861,22 @@
         </div>
         <div class="form-error" id="form-error"></div>
         <div class="modal-actions">
-          <button type="button" class="btn" id="modal-cancel-btn">Cancel</button>
-          <button type="submit" class="btn btn-primary" id="modal-submit-btn">Create Session</button>
+          <button type="button" class="btn" id="modal-cancel-btn"><i class="ph ph-x"></i><span>Cancel</span></button>
+          <button type="submit" class="btn btn-primary" id="modal-submit-btn"><i class="ph ph-plus"></i><span>Create Session</span></button>
         </div>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Prompt Modal -->
+<div class="modal-backdrop" id="prompt-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="prompt-modal-title">
+    <div class="modal-title" id="prompt-modal-title">Prompt References</div>
+    <div id="prompt-list" style="display:flex;flex-direction:column;gap:12px;"></div>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button type="button" class="btn" id="prompt-close-btn"><i class="ph ph-x"></i><span>Close</span></button>
+    </div>
   </div>
 </div>
 
@@ -795,13 +890,19 @@
   // ── State ──────────────────────────────────────────────────────────────
   let sessions = [];
   let capacity = null;
+  let hostMetrics = null;
   let profiles = [];
+  let promptReferences = [];
+  let theme = localStorage.getItem('imparando_theme') || 'light';
   let refreshTimer = null;
   let currentSessionId = null;
   let term = null;
   let fitAddon = null;
   let ws = null;
   let resizeObserver = null;
+  let terminalConnectionGeneration = 0;
+
+  document.documentElement.setAttribute('data-theme', theme);
 
   // ── Login / Logout ─────────────────────────────────────────────────────
   document.getElementById('login-form').addEventListener('submit', async function (e) {
@@ -839,6 +940,25 @@
     sessionStorage.removeItem('imparando_creds');
     showLoginOverlay();
   });
+
+  function updateThemeToggle() {
+    var btn = document.getElementById('theme-toggle-btn');
+    if (!btn) return;
+    btn.innerHTML = theme === 'dark'
+      ? '<i class="ph ph-sun"></i>'
+      : '<i class="ph ph-moon"></i>';
+    btn.setAttribute('title', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+    btn.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+  }
+
+  document.getElementById('theme-toggle-btn').addEventListener('click', function () {
+    theme = theme === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('imparando_theme', theme);
+    document.documentElement.setAttribute('data-theme', theme);
+    updateThemeToggle();
+  });
+
+  updateThemeToggle();
 
   function showLoginOverlay(msg) {
     stopAutoRefresh();
@@ -953,8 +1073,11 @@
     try {
       sessions = await apiFetch('/api/sessions');
       capacity = await apiFetch('/api/capacity');
+      hostMetrics = await apiFetch('/api/host-metrics');
       profiles = await apiFetch('/api/profiles');
+      promptReferences = await apiFetch('/api/prompts');
       renderProfiles();
+      renderPromptReferences();
       renderSessions();
       renderCapacity();
     } catch (e) {
@@ -1012,32 +1135,81 @@
     return memoryMb + ' MiB';
   }
 
+  function formatPercent(value) {
+    if (value === null || value === undefined || isNaN(value)) return '?';
+    return (Math.round(value * 10) / 10) + '%';
+  }
+
+  function formatLoad(value) {
+    if (value === null || value === undefined || isNaN(value)) return '?';
+    return String(Math.round(value * 100) / 100);
+  }
+
+  function formatHostUptime(seconds) {
+    if (seconds === null || seconds === undefined || isNaN(seconds)) return '?';
+    var d = Math.floor(seconds / 86400);
+    var h = Math.floor((seconds % 86400) / 3600);
+    var m = Math.floor((seconds % 3600) / 60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + m + 'm';
+    return m + 'm';
+  }
+
   function renderCapacity() {
-    var grid = document.getElementById('capacity-grid');
+    var budgetGrid = document.getElementById('budget-grid');
+    var nodeGrid = document.getElementById('node-metrics-grid');
     var hint = document.getElementById('capacity-hint');
-    if (!grid || !hint || !capacity) {
+    if (!budgetGrid || !nodeGrid || !hint || !capacity) {
       return;
     }
 
     var remainingSessions = Math.max(0, capacity.max_sessions - capacity.active_sessions);
     var remainingVcpus = Math.max(0, capacity.max_total_vcpus - capacity.used_vcpus);
     var remainingMemoryMb = Math.max(0, capacity.max_total_memory_mb - capacity.used_memory_mb);
+    budgetGrid.innerHTML =
+      '<div class="ledger-item" data-hint="' + escHtml(String(capacity.max_sessions)) + ' max | ' + escHtml(String(remainingSessions)) + ' free">' +
+        '<div class="ledger-label">Sessions</div>' +
+        '<div class="ledger-value">' + escHtml(String(capacity.active_sessions)) + '</div>' +
+      '</div>' +
+      '<div class="ledger-item" data-hint="' + escHtml(String(capacity.max_total_vcpus)) + ' max | ' + escHtml(String(remainingVcpus)) + ' free">' +
+        '<div class="ledger-label">vCPU</div>' +
+        '<div class="ledger-value">' + escHtml(String(capacity.used_vcpus)) + '</div>' +
+      '</div>' +
+      '<div class="ledger-item" data-hint="' + escHtml(formatMemoryMb(capacity.max_total_memory_mb)) + ' max | ' + escHtml(formatMemoryMb(remainingMemoryMb)) + ' free">' +
+        '<div class="ledger-label">Memory</div>' +
+        '<div class="ledger-value">' + escHtml(formatMemoryMb(capacity.used_memory_mb)) + '</div>' +
+      '</div>';
 
-    grid.innerHTML =
-      '<div class="capacity-metric">' +
-      '<div class="capacity-metric-label">Sessions</div>' +
-      '<div class="capacity-metric-value">' + escHtml(String(capacity.active_sessions)) + ' / ' + escHtml(String(capacity.max_sessions)) + '</div>' +
-      '<div class="capacity-metric-subtle">' + escHtml(String(remainingSessions)) + ' free</div>' +
+    if (!hostMetrics) {
+      nodeGrid.innerHTML = '';
+      return;
+    }
+
+    var memoryUsedPercent = hostMetrics.total_memory_mb > 0 ? (hostMetrics.used_memory_mb / hostMetrics.total_memory_mb) * 100 : 0;
+    var diskUsedMb = Math.max(0, hostMetrics.root_total_disk_mb - hostMetrics.root_available_disk_mb);
+    var diskUsedPercent = hostMetrics.root_total_disk_mb > 0 ? (diskUsedMb / hostMetrics.root_total_disk_mb) * 100 : 0;
+    var swapUsedPercent = hostMetrics.total_swap_mb > 0 ? (hostMetrics.used_swap_mb / hostMetrics.total_swap_mb) * 100 : 0;
+
+    nodeGrid.innerHTML =
+      '<div class="ledger-item" data-hint="load ' +
+          escHtml(formatLoad(hostMetrics.load_average_one)) + ' ' +
+          escHtml(formatLoad(hostMetrics.load_average_five)) + ' ' +
+          escHtml(formatLoad(hostMetrics.load_average_fifteen)) +
+        '">' +
+        '<div class="ledger-label">CPU</div>' +
+        '<div class="ledger-value">' + escHtml(formatPercent(hostMetrics.cpu_usage_percent)) + '</div>' +
       '</div>' +
-      '<div class="capacity-metric">' +
-      '<div class="capacity-metric-label">vCPU</div>' +
-      '<div class="capacity-metric-value">' + escHtml(String(capacity.used_vcpus)) + ' / ' + escHtml(String(capacity.max_total_vcpus)) + '</div>' +
-      '<div class="capacity-metric-subtle">' + escHtml(String(remainingVcpus)) + ' free</div>' +
+      '<div class="ledger-item" data-hint="' + escHtml(formatMemoryMb(hostMetrics.total_memory_mb)) + ' total | ' + escHtml(formatMemoryMb(hostMetrics.available_memory_mb)) + ' free">' +
+        '<div class="ledger-label">Memory</div>' +
+        '<div class="ledger-value">' + escHtml(formatMemoryMb(hostMetrics.used_memory_mb)) + '</div>' +
       '</div>' +
-      '<div class="capacity-metric">' +
-      '<div class="capacity-metric-label">Memory</div>' +
-      '<div class="capacity-metric-value">' + escHtml(formatMemoryMb(capacity.used_memory_mb)) + '</div>' +
-      '<div class="capacity-metric-subtle">' + escHtml(formatMemoryMb(remainingMemoryMb)) + ' free of ' + escHtml(formatMemoryMb(capacity.max_total_memory_mb)) + '</div>' +
+      '<div class="ledger-item" data-hint="' + escHtml(formatMemoryMb(hostMetrics.root_total_disk_mb)) + ' total | ' + escHtml(formatMemoryMb(hostMetrics.root_available_disk_mb)) + ' free">' +
+        '<div class="ledger-label">Disk</div>' +
+        '<div class="ledger-value">' + escHtml(formatMemoryMb(diskUsedMb)) + '</div>' +
+      '</div>' +
+      '<div class="ledger-item" data-hint="' + escHtml(formatMemoryMb(hostMetrics.total_swap_mb)) + ' total">' +
+        '<div class="ledger-label">Swap</div>' +
+        '<div class="ledger-value">' + escHtml(formatMemoryMb(hostMetrics.used_swap_mb)) + '</div>' +
       '</div>';
 
     hint.textContent =
@@ -1058,6 +1230,30 @@
     }).join('');
 
     applySelectedProfileDefaults();
+  }
+
+  function renderPromptReferences() {
+    var container = document.getElementById('prompt-list');
+    if (!container) return;
+    if (!promptReferences || promptReferences.length === 0) {
+      container.innerHTML = '<div class="empty-state"><p>No prompt references are available.</p></div>';
+      return;
+    }
+
+    container.innerHTML = promptReferences.map(function (prompt) {
+      return '' +
+        '<div class="session-card" style="cursor:default;">' +
+          '<div class="session-card-top">' +
+            '<div class="session-name">' + escHtml(prompt.title) + '</div>' +
+            '<div class="session-actions">' +
+              '<button class="btn btn-sm" onclick="copyPromptPath(\'' + escHtml(prompt.id) + '\')"><i class="ph ph-link"></i><span>Copy Path</span></button>' +
+              '<button class="btn btn-sm" onclick="copyPromptBody(\'' + escHtml(prompt.id) + '\')"><i class="ph ph-copy"></i><span>Copy Prompt</span></button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="session-meta"><span>' + escHtml(prompt.summary) + '</span></div>' +
+          '<div class="session-repos"><span class="repo-link">' + escHtml(prompt.vm_path) + '</span></div>' +
+        '</div>';
+    }).join('');
   }
 
   function applySelectedProfileDefaults() {
@@ -1099,7 +1295,7 @@
     container.innerHTML = sessions.map(function(s) {
       var repos = Array.isArray(s.repos) ? s.repos : [];
       var repoChips = repos.map(function(r) {
-        return '<span class="repo-chip">' + escHtml(r.replace(/^https?:\/\/(www\.)?github\.com\//, '')) + '</span>';
+        return '<span class="repo-link">' + escHtml(r.replace(/^https?:\/\/(www\.)?github\.com\//, '')) + '</span>';
       }).join('');
 
       var canOpen = s.status === 'running';
@@ -1116,8 +1312,8 @@
         '</div>' +
         '<div class="session-actions">' +
         '<button class="btn btn-sm" onclick="event.stopPropagation();openSession(\'' + escHtml(s.id) + '\')"' +
-        (canOpen ? '' : ' disabled') + '>Open</button>' +
-        '<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deleteSession(\'' + escHtml(s.id) + '\')">Delete</button>' +
+        (canOpen ? '' : ' disabled') + '><i class="ph ph-arrow-square-out"></i><span>Open</span></button>' +
+        '<button class="btn btn-sm btn-icon btn-danger" aria-label="Delete session" title="Delete session" onclick="event.stopPropagation();deleteSession(\'' + escHtml(s.id) + '\')"><i class="ph ph-trash"></i></button>' +
         '</div></div>' +
         '<div class="session-meta">' +
         '<span>' + escHtml(profileName) + '</span>' +
@@ -1154,6 +1350,43 @@
       await loadSessions();
     } catch (e) {
       showToast('Failed to delete session: ' + e.message, 'error');
+    }
+  };
+
+  document.getElementById('prompts-btn').addEventListener('click', openPromptModal);
+  document.getElementById('prompt-close-btn').addEventListener('click', closePromptModal);
+  document.getElementById('prompt-modal').addEventListener('click', function (e) {
+    if (e.target === this) closePromptModal();
+  });
+
+  function openPromptModal() {
+    renderPromptReferences();
+    document.getElementById('prompt-modal').classList.add('open');
+  }
+
+  function closePromptModal() {
+    document.getElementById('prompt-modal').classList.remove('open');
+  }
+
+  window.copyPromptPath = async function (id) {
+    var prompt = (promptReferences || []).find(function (entry) { return entry.id === id; });
+    if (!prompt) return;
+    try {
+      await navigator.clipboard.writeText(prompt.vm_path);
+      showToast('Prompt path copied.', 'success');
+    } catch (_) {
+      showToast('Failed to copy prompt path.', 'error');
+    }
+  };
+
+  window.copyPromptBody = async function (id) {
+    var prompt = (promptReferences || []).find(function (entry) { return entry.id === id; });
+    if (!prompt) return;
+    try {
+      await navigator.clipboard.writeText(prompt.body);
+      showToast('Prompt copied.', 'success');
+    } catch (_) {
+      showToast('Failed to copy prompt.', 'error');
     }
   };
 
@@ -1235,6 +1468,8 @@
 
   function setupTerminal(sessionId) {
     teardownTerminal();
+    terminalConnectionGeneration += 1;
+    var connectionGeneration = terminalConnectionGeneration;
 
     var container = document.getElementById('terminal-container');
     container.innerHTML = '';
@@ -1285,7 +1520,7 @@
       term.attachCustomWheelEventHandler(function() { return true; });
     }
 
-    connectWebSocket(sessionId);
+    connectWebSocket(sessionId, connectionGeneration);
 
     resizeObserver = new ResizeObserver(function() {
       fitAddon.fit();
@@ -1305,18 +1540,24 @@
     });
   }
 
-  function connectWebSocket(sessionId) {
+  function connectWebSocket(sessionId, connectionGeneration) {
     var proto = location.protocol === 'https:' ? 'wss' : 'ws';
     var url = proto + '://' + location.host + '/api/sessions/' + sessionId + '/terminal';
-    ws = new WebSocket(url);
-    ws.binaryType = 'arraybuffer';
+    var socket = new WebSocket(url);
+    socket.binaryType = 'arraybuffer';
+    ws = socket;
 
-    ws.onopen = function() {
+    socket.onopen = function() {
+      if (connectionGeneration !== terminalConnectionGeneration || ws !== socket) {
+        socket.close();
+        return;
+      }
       setTerminalStatus('connected');
       sendResize();
     };
 
-    ws.onmessage = function(event) {
+    socket.onmessage = function(event) {
+      if (connectionGeneration !== terminalConnectionGeneration || ws !== socket || !term) return;
       if (!(event.data instanceof ArrayBuffer)) return;
       var view = new Uint8Array(event.data);
       if (view.length === 0) return;
@@ -1325,14 +1566,19 @@
       }
     };
 
-    ws.onclose = function(event) {
+    socket.onclose = function(event) {
+      if (ws === socket) {
+        ws = null;
+      }
+      if (connectionGeneration !== terminalConnectionGeneration) return;
       setTerminalStatus('disconnected');
       if (term) {
         term.write('\r\n\x1b[2m\x1b[38;5;245m--- connection closed (' + event.code + ') ---\x1b[0m\r\n');
       }
     };
 
-    ws.onerror = function() {
+    socket.onerror = function() {
+      if (connectionGeneration !== terminalConnectionGeneration || ws !== socket) return;
       setTerminalStatus('disconnected');
       if (term) {
         term.write('\r\n\x1b[31m--- connection error ---\x1b[0m\r\n');
@@ -1352,6 +1598,7 @@
   }
 
   function teardownTerminal() {
+    terminalConnectionGeneration += 1;
     if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
     if (ws) { ws.close(); ws = null; }
     if (term) { term.dispose(); term = null; }

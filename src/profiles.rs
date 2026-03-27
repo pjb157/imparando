@@ -29,7 +29,7 @@ pub fn list_profiles() -> Vec<ImageProfileDefinition> {
         name: "ts-rust-postgres",
         description: "TypeScript, Rust, PostgreSQL, Node, pnpm, just, and common dev tooling",
         default_vcpus: 2,
-        default_memory_mb: 2048,
+        default_memory_mb: 4096,
         disk_mb: 50 * 1024,
     }]
 }

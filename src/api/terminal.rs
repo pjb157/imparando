@@ -30,6 +30,7 @@ async fn handle_socket(socket: WebSocket, id: Uuid, manager: SharedSessionManage
             return;
         }
     };
+    let (connection_id, mut cancel_rx) = manager.register_terminal_connection(id).await;
 
     let ttyd_url = format!("ws://{}:7681/ws", vm_ip);
     tracing::info!(session_id = %id, url = %ttyd_url, "Connecting to ttyd");
@@ -61,7 +62,7 @@ async fn handle_socket(socket: WebSocket, id: Uuid, manager: SharedSessionManage
 
     let sid = id;
     // Browser → ttyd
-    let b2t = tokio::spawn(async move {
+    let mut b2t = tokio::spawn(async move {
         use tokio_tungstenite::tungstenite::Message as TMsg;
         while let Some(result) = browser_rx.next().await {
             match result {
@@ -99,7 +100,7 @@ async fn handle_socket(socket: WebSocket, id: Uuid, manager: SharedSessionManage
 
     let sid = id;
     // ttyd → browser
-    let t2b = tokio::spawn(async move {
+    let mut t2b = tokio::spawn(async move {
         use tokio_tungstenite::tungstenite::Message as TMsg;
         let mut msg_count: u64 = 0;
         while let Some(result) = ttyd_rx.next().await {
@@ -139,11 +140,18 @@ async fn handle_socket(socket: WebSocket, id: Uuid, manager: SharedSessionManage
     });
 
     tokio::select! {
-        _ = b2t => {}
-        _ = t2b => {}
+        _ = &mut cancel_rx => {
+            tracing::info!(session_id = %id, connection_id, "Terminal WS superseded by newer connection");
+        }
+        _ = &mut b2t => {}
+        _ = &mut t2b => {}
     }
 
+    b2t.abort();
+    t2b.abort();
+
     tracing::info!(session_id = %id, "Terminal WS disconnected");
+    manager.unregister_terminal_connection(id, connection_id).await;
 }
 
 async fn connect_ttyd(url: &str, timeout_secs: u64) -> anyhow::Result<TtydWs> {

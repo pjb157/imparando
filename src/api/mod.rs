@@ -18,7 +18,9 @@ pub fn router(manager: SharedSessionManager, user: String, pass: String) -> Rout
     let api = Router::new()
         .route("/api/sessions", get(sessions::list_sessions))
         .route("/api/capacity", get(sessions::get_capacity))
+        .route("/api/host-metrics", get(sessions::get_host_metrics))
         .route("/api/profiles", get(sessions::list_profiles))
+        .route("/api/prompts", get(sessions::list_prompts))
         .route("/api/sessions", post(sessions::create_session))
         .route("/api/sessions/:id", get(sessions::get_session))
         .route("/api/sessions/:id/stop", put(sessions::stop_session))
@@ -31,6 +33,7 @@ pub fn router(manager: SharedSessionManager, user: String, pass: String) -> Rout
     // in the URL unreliable across browsers.)
     let terminal = Router::new()
         .route("/api/sessions/:id/terminal", get(terminal::terminal_ws))
+        .route("/api/sessions/:id/github-token", get(sessions::github_token))
         .with_state(manager);
 
     Router::new().merge(api).merge(terminal).route("/", get(serve_ui))

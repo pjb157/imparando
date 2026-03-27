@@ -82,6 +82,14 @@ debootstrap --components=main,universe \
     jammy "$TMPDIR" http://archive.ubuntu.com/ubuntu/
 success "debootstrap complete."
 
+info "Configuring Ubuntu APT sources..."
+cat > "$TMPDIR/etc/apt/sources.list" <<'EOF'
+deb http://archive.ubuntu.com/ubuntu jammy main universe
+deb http://archive.ubuntu.com/ubuntu jammy-updates main universe
+deb http://security.ubuntu.com/ubuntu jammy-security main universe
+EOF
+success "Ubuntu APT sources configured."
+
 info "Mounting chroot pseudo-filesystems..."
 mount_chroot_fs
 success "Chroot pseudo-filesystems mounted."
@@ -127,6 +135,19 @@ chroot "$TMPDIR" apt-get install -y \
   xz-utils
 success "General development tooling installed."
 
+# Add the official PostgreSQL APT repository so Ubuntu 22.04 can install
+# PostgreSQL 17 instead of the distro-default PostgreSQL 14.
+info "Configuring PostgreSQL APT repository..."
+chroot "$TMPDIR" bash -lc '
+set -e
+install -d /usr/share/postgresql-common/pgdg
+curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+. /etc/os-release
+echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list
+apt-get update
+'
+success "PostgreSQL APT repository configured."
+
 # Install the latest stable Rust toolchain with rustup and expose it system-wide.
 info "Installing latest stable Rust via rustup..."
 chroot "$TMPDIR" bash -lc '
@@ -143,7 +164,11 @@ ln -sf /root/.cargo/bin/rustfmt /usr/local/bin/rustfmt
 ln -sf /root/.cargo/bin/rustup /usr/local/bin/rustup
 ln -sf /root/.cargo/bin/clippy-driver /usr/local/bin/clippy-driver
 /root/.cargo/bin/cargo install just --locked
+/root/.cargo/bin/cargo install cargo-llvm-cov --locked
+/root/.cargo/bin/cargo install sqlx-cli --no-default-features --features rustls,postgres --locked
 ln -sf /root/.cargo/bin/just /usr/local/bin/just
+ln -sf /root/.cargo/bin/cargo-llvm-cov /usr/local/bin/cargo-llvm-cov
+ln -sf /root/.cargo/bin/sqlx /usr/local/bin/sqlx
 '
 success "Rust installed."
 
@@ -160,14 +185,18 @@ info "Installing tmux and PostgreSQL..."
 chroot "$TMPDIR" apt-get install -y \
   -o Dpkg::Options::=--force-confdef \
   -o Dpkg::Options::=--force-confold \
-  tmux postgresql postgresql-client
+  tmux postgresql-17 postgresql-client-17
 success "tmux and PostgreSQL installed."
 
 # Configure PostgreSQL to start without systemd
 info "Configuring PostgreSQL for microVM use..."
 chroot "$TMPDIR" bash -lc '
 set -e
-PG_VERSION=$(ls /usr/lib/postgresql | sort -V | tail -1)
+if [ -d /usr/lib/postgresql/17 ]; then
+  PG_VERSION=17
+else
+  PG_VERSION=$(ls /usr/lib/postgresql | sort -V | tail -1)
+fi
 mkdir -p /var/lib/postgresql/$PG_VERSION/main
 chown -R postgres:postgres /var/lib/postgresql
 mkdir -p /etc/postgresql/$PG_VERSION/main
@@ -178,32 +207,37 @@ EOF
 cat > "$TMPDIR/usr/local/bin/start-postgres.sh" << 'PGEOF'
 #!/bin/bash
 # Start PostgreSQL in the microVM (no systemd)
-set -e
-PG_VERSION=$(ls /usr/lib/postgresql | sort -V | tail -1)
+set -euo pipefail
+if [ -d /usr/lib/postgresql/17 ]; then
+  PG_VERSION=17
+else
+  PG_VERSION=$(ls /usr/lib/postgresql | sort -V | tail -1)
+fi
 PG_DATA="/var/lib/postgresql/$PG_VERSION/main"
-PG_ETC="/etc/postgresql/$PG_VERSION/main"
+PG_BIN="/usr/lib/postgresql/$PG_VERSION/bin"
+RUN_AS_POSTGRES=(chroot --userspec=postgres:postgres /)
 
 # Fix ownership (may be wrong after overlay copy)
 mkdir -p /var/run/postgresql /var/log/postgresql
 chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql /var/log/postgresql
 
 # Initialize the cluster on first boot inside the VM, where switching to the
-# postgres user works normally.
+# postgres user no longer depends on setuid su.
 if [ ! -s "$PG_DATA/PG_VERSION" ]; then
   rm -rf "$PG_DATA"
-  mkdir -p "$PG_DATA" "$PG_ETC"
+  mkdir -p "$PG_DATA"
   chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql /var/log/postgresql
-  su -s /bin/sh postgres -c "/usr/lib/postgresql/$PG_VERSION/bin/initdb -D '$PG_DATA'"
-  cp "$PG_DATA/postgresql.conf" "$PG_ETC/postgresql.conf"
-  cp "$PG_DATA/pg_hba.conf" "$PG_ETC/pg_hba.conf"
-  cp "$PG_DATA/pg_ident.conf" "$PG_ETC/pg_ident.conf"
+  "${RUN_AS_POSTGRES[@]}" "$PG_BIN/initdb" -D "$PG_DATA"
 fi
 
 chmod 700 "$PG_DATA"
-sed -i "s/^#listen_addresses = .*/listen_addresses = '127.0.0.1'/" "$PG_ETC/postgresql.conf"
+sed -i "s/^#listen_addresses = .*/listen_addresses = '127.0.0.1'/" "$PG_DATA/postgresql.conf"
+if ! grep -q "^unix_socket_directories = '/var/run/postgresql'" "$PG_DATA/postgresql.conf"; then
+  printf "\nunix_socket_directories = '/var/run/postgresql'\n" >> "$PG_DATA/postgresql.conf"
+fi
 
-# Start PostgreSQL (use su -s to avoid login shell cd issues)
-su -s /bin/sh postgres -c "/usr/lib/postgresql/$PG_VERSION/bin/pg_ctl -D '$PG_DATA' -l /var/log/postgresql/postgresql.log start -w"
+# Start PostgreSQL
+"${RUN_AS_POSTGRES[@]}" "$PG_BIN/pg_ctl" -D "$PG_DATA" -l /var/log/postgresql/postgresql.log start -w
 echo "PostgreSQL started on port 5432"
 PGEOF
 chmod +x "$TMPDIR/usr/local/bin/start-postgres.sh"
@@ -239,7 +273,9 @@ info "Mounting ext4 image at $MOUNTDIR..."
 mount -o loop /var/lib/imparando/base.ext4 "$MOUNTDIR"
 
 info "Copying chroot contents into image with rsync..."
-rsync -aHAX --info=progress2 \
+# Avoid preserving host ACLs/xattrs into the guest image. They are not needed
+# here and can cause non-root exec/linker permission failures inside the VM.
+rsync -aH --info=progress2 \
   --exclude=/proc/* \
   --exclude=/sys/* \
   --exclude=/dev/* \

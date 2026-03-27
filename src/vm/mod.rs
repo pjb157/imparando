@@ -8,8 +8,9 @@ use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{oneshot, RwLock};
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -92,6 +93,8 @@ pub type SharedSessionManager = Arc<SessionManager>;
 pub struct SessionManager {
     config: Config,
     sessions: RwLock<HashMap<Uuid, Session>>,
+    terminal_connections: RwLock<HashMap<Uuid, (u64, oneshot::Sender<()>)>>,
+    next_terminal_connection_id: AtomicU64,
 }
 
 impl SessionManager {
@@ -99,6 +102,8 @@ impl SessionManager {
         Arc::new(Self {
             config,
             sessions: RwLock::new(HashMap::new()),
+            terminal_connections: RwLock::new(HashMap::new()),
+            next_terminal_connection_id: AtomicU64::new(1),
         })
     }
 
@@ -146,6 +151,59 @@ impl SessionManager {
 
     pub fn list_image_profiles(&self) -> Vec<ImageProfileDefinition> {
         self.config.list_image_profiles()
+    }
+
+    pub async fn create_github_token_for_session(&self, id: Uuid, repo: &str) -> Result<String> {
+        let session = self
+            .get_session(id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("Session {id} not found"))?;
+
+        if !is_github_repo_url(repo) {
+            bail!("Repository is not a supported GitHub URL");
+        }
+
+        if !session.repos.iter().any(|configured_repo| configured_repo == repo) {
+            bail!("Repository is not configured for this session");
+        }
+
+        match (
+            self.config.github_app_id,
+            self.config.github_installation_id,
+            self.config.github_app_private_key.as_deref(),
+        ) {
+            (Some(app_id), Some(installation_id), Some(private_key_path)) => {
+                create_installation_token(app_id, installation_id, private_key_path).await
+            }
+            _ => bail!("GitHub App credentials are not configured"),
+        }
+    }
+
+    pub async fn register_terminal_connection(&self, id: Uuid) -> (u64, oneshot::Receiver<()>) {
+        let connection_id = self
+            .next_terminal_connection_id
+            .fetch_add(1, Ordering::Relaxed);
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let previous = self
+            .terminal_connections
+            .write()
+            .await
+            .insert(id, (connection_id, cancel_tx));
+        if let Some((_, previous_cancel_tx)) = previous {
+            let _ = previous_cancel_tx.send(());
+        }
+        (connection_id, cancel_rx)
+    }
+
+    pub async fn unregister_terminal_connection(&self, id: Uuid, connection_id: u64) {
+        let mut terminal_connections = self.terminal_connections.write().await;
+        let should_remove = terminal_connections
+            .get(&id)
+            .map(|(active_connection_id, _)| *active_connection_id == connection_id)
+            .unwrap_or(false);
+        if should_remove {
+            terminal_connections.remove(&id);
+        }
     }
 
     // ── Session lifecycle ─────────────────────────────────────────────────────
@@ -333,6 +391,9 @@ impl SessionManager {
             s.tap_name = None;
             s.vm_ip = None;
         }
+        if let Some((_, cancel_tx)) = self.terminal_connections.write().await.remove(&id) {
+            let _ = cancel_tx.send(());
+        }
     }
 
     async fn boot_vm(self: Arc<Self>, id: Uuid) -> Result<()> {
@@ -388,6 +449,7 @@ impl SessionManager {
             &overlay_path,
             &self.config.ttyd_bin,
             &self.config.auth_home,
+            self.config.port,
             &id.to_string(),
             &session.repos,
             session.agent,

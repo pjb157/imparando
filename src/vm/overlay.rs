@@ -3,6 +3,7 @@ use std::io::Read;
 use std::path::Path;
 use tokio::process::Command;
 
+use crate::prompts::built_in_prompts;
 use crate::vm::AgentKind;
 
 pub struct OverlayManager;
@@ -32,6 +33,7 @@ impl OverlayManager {
         overlay_path: &Path,
         ttyd_bin: &Path,
         auth_home: &Path,
+        app_port: u16,
         session_id: &str,
         repos: &[String],
         agent: AgentKind,
@@ -64,6 +66,7 @@ impl OverlayManager {
         .await?;
 
         let script = build_startup_script(
+            app_port,
             session_id,
             repos,
             agent,
@@ -90,6 +93,15 @@ impl OverlayManager {
             let script_path = mount_dir.join("startup.sh");
             tokio::fs::write(&script_path, &script).await?;
 
+            // Override the PostgreSQL helper in each overlay so guest boot
+            // does not depend on setuid `su`, which is unreliable here.
+            let postgres_helper_path = mount_dir.join("usr/local/bin/start-postgres.sh");
+            if let Some(parent) = postgres_helper_path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            tokio::fs::write(&postgres_helper_path, postgres_start_script()).await?;
+            run("chmod", &["+x", postgres_helper_path.to_str().unwrap()]).await?;
+
             // Seed the guest CRNG from host entropy so TLS clients don't block
             // waiting for early-boot randomness inside minimal microVMs.
             let mut seed = [0u8; 512];
@@ -113,6 +125,26 @@ impl OverlayManager {
             run("mkdir", &["-p", mount_dir.join("usr/local/bin").to_str().unwrap()]).await?;
             tokio::fs::copy(ttyd_bin, &ttyd_dest).await?;
             run("chmod", &["+x", ttyd_dest.to_str().unwrap()]).await?;
+
+            let git_credential_helper = mount_dir.join("usr/local/bin/git-credential-imparando");
+            tokio::fs::write(&git_credential_helper, git_credential_helper_script()).await?;
+            run("chmod", &["+x", git_credential_helper.to_str().unwrap()]).await?;
+
+            let prompt_dir = mount_dir.join("root/.imparando/prompts");
+            tokio::fs::create_dir_all(&prompt_dir).await?;
+            for prompt in built_in_prompts() {
+                let filename = prompt
+                    .vm_path
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(prompt.id);
+                tokio::fs::write(prompt_dir.join(filename), prompt.body).await?;
+            }
+
+            let workspace_dir = mount_dir.join("root/workspace");
+            tokio::fs::create_dir_all(&workspace_dir).await?;
+            tokio::fs::write(workspace_dir.join("AGENTS.md"), shared_agents_md()).await?;
+            tokio::fs::write(workspace_dir.join("CLAUDE.md"), shared_claude_md()).await?;
 
             // Write SSH key if provided
             if let Some(key) = ssh_key {
@@ -171,6 +203,41 @@ fn github_repo_path(url: &str) -> Option<&str> {
         .or_else(|| url.strip_prefix("git@github.com:"))
 }
 
+fn postgres_start_script() -> &'static str {
+    r#"#!/bin/bash
+# Start PostgreSQL in the microVM (no systemd).
+set -euo pipefail
+if [ -d /usr/lib/postgresql/17 ]; then
+  PG_VERSION=17
+else
+  PG_VERSION=$(ls /usr/lib/postgresql | sort -V | tail -1)
+fi
+PG_DATA="/var/lib/postgresql/$PG_VERSION/main"
+PG_BIN="/usr/lib/postgresql/$PG_VERSION/bin"
+RUN_AS_POSTGRES=(chroot --userspec=postgres:postgres /)
+
+mkdir -p "$PG_DATA" /var/run/postgresql /var/log/postgresql
+chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql /var/log/postgresql
+
+if [ ! -s "$PG_DATA/PG_VERSION" ]; then
+  rm -rf "$PG_DATA"
+  mkdir -p "$PG_DATA"
+  chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql /var/log/postgresql
+  "${RUN_AS_POSTGRES[@]}" "$PG_BIN/initdb" -D "$PG_DATA"
+fi
+
+chmod 700 "$PG_DATA"
+sed -i "s/^#listen_addresses = .*/listen_addresses = '127.0.0.1'/" "$PG_DATA/postgresql.conf"
+
+if ! grep -q "^unix_socket_directories = '/var/run/postgresql'" "$PG_DATA/postgresql.conf"; then
+  printf "\nunix_socket_directories = '/var/run/postgresql'\n" >> "$PG_DATA/postgresql.conf"
+fi
+
+"${RUN_AS_POSTGRES[@]}" "$PG_BIN/pg_ctl" -D "$PG_DATA" -l /var/log/postgresql/postgresql.log start -w
+echo "PostgreSQL started on port 5432"
+"#
+}
+
 fn repo_dir_name(url: &str) -> String {
     let path = github_repo_path(url).unwrap_or(url);
     path.rsplit('/')
@@ -182,9 +249,95 @@ fn repo_dir_name(url: &str) -> String {
 
 fn clone_url_for_repo(url: &str, github_token: Option<&str>) -> String {
     match (github_repo_path(url), github_token) {
-        (Some(path), Some(token)) => format!("https://x-access-token:{token}@github.com/{path}"),
+        (Some(path), Some(_)) => format!("https://github.com/{path}"),
         _ => url.to_string(),
     }
+}
+
+fn git_credential_helper_script() -> &'static str {
+    r#"#!/bin/sh
+if [ "$1" != "get" ]; then
+  exit 0
+fi
+
+protocol=""
+host=""
+path=""
+
+while IFS= read -r line && [ -n "$line" ]; do
+  case "$line" in
+    protocol=*) protocol=${line#protocol=} ;;
+    host=*) host=${line#host=} ;;
+    path=*) path=${line#path=} ;;
+  esac
+done
+
+if [ "$protocol" = "https" ] && [ "$host" = "github.com" ] && [ -n "${IMPARANDO_HOST_API:-}" ] && [ -n "${IMPARANDO_SESSION_ID:-}" ] && [ -n "$path" ]; then
+  repo_path=${path#/}
+  repo_url="https://github.com/$repo_path"
+  encoded_repo=$(printf '%s' "$repo_url" | sed 's/%/%25/g; s/:/%3A/g; s,/,%2F,g')
+  token=$(curl -fsS "${IMPARANDO_HOST_API}/api/sessions/${IMPARANDO_SESSION_ID}/github-token?repo=${encoded_repo}") || exit 1
+  printf 'username=%s\n' 'x-access-token'
+  printf 'password=%s\n' "$token"
+fi
+"#
+}
+
+fn shared_agents_md() -> &'static str {
+    r#"# Workspace Guidance
+
+This VM is managed by Imparando. Read this before making environment changes.
+
+## Core Rules
+
+- Prefer using the existing environment instead of reinstalling tooling.
+- Do not run browser or device login flows inside the VM for GitHub, Claude, or Codex unless explicitly instructed.
+- Keep git remotes clean HTTPS URLs without embedded credentials.
+- When creating git commits, always use Conventional Commit style messages.
+- Prefer reporting concrete diagnostics over inventing a new environment setup.
+
+## Prompt References
+
+Useful guidance files live in `/root/.imparando/prompts`:
+
+- `/root/.imparando/prompts/github-auth.md`
+- `/root/.imparando/prompts/postgres-start.md`
+
+If you need git push help, read the GitHub auth prompt first.
+If PostgreSQL is not reachable on `127.0.0.1:5432`, read the Postgres recovery prompt first.
+
+## GitHub
+
+- Expected git credential helper: `/usr/local/bin/git-credential-imparando`
+- Do not run `gh auth login`
+- Do not embed tokens into `origin`
+
+## PostgreSQL
+
+- Expected local address: `127.0.0.1:5432`
+- Do not use `systemctl`
+- First recovery command: `/usr/local/bin/start-postgres.sh`
+"#
+}
+
+fn shared_claude_md() -> &'static str {
+    r#"# Claude Workspace Guidance
+
+This VM is managed by Imparando. Prefer the existing environment and read local guidance files before changing auth or database setup.
+
+## Start Here
+
+- Shared workspace guidance: `/root/workspace/AGENTS.md`
+- GitHub auth guide: `/root/.imparando/prompts/github-auth.md`
+- Postgres recovery guide: `/root/.imparando/prompts/postgres-start.md`
+
+## Important Constraints
+
+- Do not run browser/device auth flows inside the VM unless explicitly required.
+- Do not rewrite git remotes to include tokens.
+- When creating git commits, always use Conventional Commit style messages.
+- If PostgreSQL is down, use `/usr/local/bin/start-postgres.sh` before attempting manual cluster setup.
+"#
 }
 
 async fn copy_if_exists(src: &Path, dst: &Path) -> Result<()> {
@@ -231,10 +384,29 @@ async fn copy_codex_auth(host_home: &Path, mount_dir: &Path) -> Result<()> {
         &vm_codex_dir.join("config.toml"),
     )
     .await?;
+
+    let config_path = vm_codex_dir.join("config.toml");
+    let mut config = if config_path.exists() {
+        tokio::fs::read_to_string(&config_path).await.unwrap_or_default()
+    } else {
+        String::new()
+    };
+    if !config.ends_with('\n') && !config.is_empty() {
+        config.push('\n');
+    }
+    if !config.contains("\napproval_policy = ") && !config.starts_with("approval_policy = ") {
+        config.push_str("approval_policy = \"never\"\n");
+    }
+    if !config.contains("\nsandbox_mode = ") && !config.starts_with("sandbox_mode = ") {
+        config.push_str("sandbox_mode = \"danger-full-access\"\n");
+    }
+    tokio::fs::write(&config_path, config).await?;
+    run("chmod", &["600", config_path.to_str().unwrap()]).await?;
     Ok(())
 }
 
 fn build_startup_script(
+    app_port: u16,
     session_id: &str,
     repos: &[String],
     agent: AgentKind,
@@ -289,6 +461,26 @@ fn build_startup_script(
         "export no_proxy='localhost,127.0.0.1,::1'".to_string(),
         "export HOME='/root'".to_string(),
         "export CODEX_HOME='/root/.codex'".to_string(),
+        "export PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'".to_string(),
+        "export CARGO_BUILD_JOBS='2'".to_string(),
+        "export npm_config_jobs='2'".to_string(),
+        "export CMAKE_BUILD_PARALLEL_LEVEL='2'".to_string(),
+        "export MAKEFLAGS='-j2'".to_string(),
+        "export PYTHONUNBUFFERED='1'".to_string(),
+        "mkdir -p /root/tmp".to_string(),
+        "export TMPDIR='/root/tmp'".to_string(),
+        String::new(),
+        "# Add guest swap so short-lived compile or agent spikes do not kill the VM.".to_string(),
+        "if [ ! -f /swapfile ]; then".to_string(),
+        "  if command -v fallocate >/dev/null 2>&1; then".to_string(),
+        "    fallocate -l 4G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none".to_string(),
+        "  else".to_string(),
+        "    dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none".to_string(),
+        "  fi".to_string(),
+        "  chmod 600 /swapfile".to_string(),
+        "  mkswap /swapfile >/dev/null 2>&1 || true".to_string(),
+        "fi".to_string(),
+        "swapon /swapfile >/dev/null 2>&1 || true".to_string(),
         String::new(),
     ];
 
@@ -322,10 +514,12 @@ fn build_startup_script(
     }
 
     lines.push("export TERM=xterm-256color".to_string());
+    lines.push(format!("export IMPARANDO_HOST_API='http://{gw_ip}:{app_port}'"));
+    lines.push(format!("export IMPARANDO_SESSION_ID='{session_id}'"));
     lines.push(format!("export IMPARANDO_SESSION_BRANCH='imparando/{session_id}'"));
-    if let Some(token) = github_token {
-        let escaped = token.replace('\'', "'\"'\"'");
-        lines.push(format!("export GITHUB_TOKEN='{escaped}'"));
+    if github_token.is_some() {
+        lines.push("git config --global credential.helper /usr/local/bin/git-credential-imparando".to_string());
+        lines.push("git config --global credential.useHttpPath true".to_string());
     }
     lines.push(String::new());
 
@@ -402,9 +596,25 @@ fn build_startup_script(
         }
     }
 
-    lines.push("  exec ttyd -W tmux attach -t main".to_string());
+    lines.push("  while true; do".to_string());
+    lines.push("    if ttyd -W tmux attach -t main; then".to_string());
+    lines.push("      echo 'ttyd exited cleanly, restarting in 1s' > /dev/ttyS0".to_string());
+    lines.push("    else".to_string());
+    lines.push("      rc=$?".to_string());
+    lines.push("      echo \"WARNING: ttyd exited with status ${rc}, restarting in 1s\" > /dev/ttyS0".to_string());
+    lines.push("    fi".to_string());
+    lines.push("    sleep 1".to_string());
+    lines.push("  done".to_string());
     lines.push("else".to_string());
-    lines.push("  exec ttyd -W bash".to_string());
+    lines.push("  while true; do".to_string());
+    lines.push("    if ttyd -W bash; then".to_string());
+    lines.push("      echo 'ttyd exited cleanly, restarting in 1s' > /dev/ttyS0".to_string());
+    lines.push("    else".to_string());
+    lines.push("      rc=$?".to_string());
+    lines.push("      echo \"WARNING: ttyd exited with status ${rc}, restarting in 1s\" > /dev/ttyS0".to_string());
+    lines.push("    fi".to_string());
+    lines.push("    sleep 1".to_string());
+    lines.push("  done".to_string());
     lines.push("fi".to_string());
 
     lines.join("\n")

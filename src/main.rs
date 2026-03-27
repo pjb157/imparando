@@ -1,5 +1,6 @@
 mod api;
 mod config;
+mod prompts;
 mod profiles;
 mod vm;
 
