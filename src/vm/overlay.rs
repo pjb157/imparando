@@ -15,6 +15,10 @@ fn host_codex_auth_exists(host_home: &Path) -> bool {
     host_home.join(".codex/auth.json").exists()
 }
 
+fn host_claude_auth_exists(host_home: &Path) -> bool {
+    host_home.join(".claude/.credentials.json").exists()
+}
+
 fn validate_repo_url(url: &str) -> Result<()> {
     let forbidden = [';', '&', '|', '$', '`', '(', ')', '<', '>', '\n', '\r', '\\'];
     if url.chars().any(|c| forbidden.contains(&c)) {
@@ -53,6 +57,9 @@ impl OverlayManager {
             .map(str::to_owned)
             .or_else(|| read_codex_api_key_from_host(auth_home));
         let codex_auth_available = effective_openai_api_key.is_some() || host_codex_auth_exists(auth_home);
+        let claude_auth_available = anthropic_api_key.is_some()
+            || claude_oauth_token.is_some()
+            || host_claude_auth_exists(auth_home);
 
         run(
             "cp",
@@ -78,6 +85,7 @@ impl OverlayManager {
             claude_oauth_token,
             effective_openai_api_key.as_deref(),
             codex_auth_available,
+            claude_auth_available,
         );
 
         let mount_dir = overlay_path.with_extension("mnt");
@@ -216,6 +224,9 @@ PG_DATA="/var/lib/postgresql/$PG_VERSION/main"
 PG_BIN="/usr/lib/postgresql/$PG_VERSION/bin"
 RUN_AS_POSTGRES=(chroot --userspec=postgres:postgres /)
 
+# Ensure non-root users can traverse the filesystem root to reach
+# PostgreSQL binaries and shared libraries.
+chmod 755 /
 mkdir -p "$PG_DATA" /var/run/postgresql /var/log/postgresql
 chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql /var/log/postgresql
 
@@ -418,6 +429,7 @@ fn build_startup_script(
     claude_oauth_token: Option<&str>,
     openai_api_key: Option<&str>,
     codex_auth_available: bool,
+    claude_auth_available: bool,
 ) -> String {
     let mut lines = vec![
         "#!/bin/bash".to_string(),
@@ -570,10 +582,8 @@ fn build_startup_script(
         let mut all_clones = clone_cmds.join(" && ");
         all_clones.push_str("; echo \"--- repos ready ---\"");
         let agent_cmd = match agent {
-            AgentKind::Claude if anthropic_api_key.is_some() || claude_oauth_token.is_some() => {
-                Some("claude --dangerously-skip-permissions")
-            }
-            AgentKind::Claude => Some("echo 'Claude selected, but no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN was injected.'"),
+            AgentKind::Claude if claude_auth_available => Some("claude --dangerously-skip-permissions"),
+            AgentKind::Claude => Some("echo 'Claude selected, but no host Claude auth, ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN was available.'"),
             AgentKind::Codex if codex_auth_available => Some("codex --dangerously-bypass-approvals-and-sandbox"),
             AgentKind::Codex => Some("echo 'Codex selected, but no host Codex auth or OPENAI_API_KEY was available.'"),
         };
@@ -584,10 +594,8 @@ fn build_startup_script(
         lines.push(format!("  tmux send-keys -t main '{}' Enter", all_clones));
     } else {
         let agent_cmd = match agent {
-            AgentKind::Claude if anthropic_api_key.is_some() || claude_oauth_token.is_some() => {
-                Some("claude --dangerously-skip-permissions")
-            }
-            AgentKind::Claude => Some("echo 'Claude selected, but no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN was injected.'"),
+            AgentKind::Claude if claude_auth_available => Some("claude --dangerously-skip-permissions"),
+            AgentKind::Claude => Some("echo 'Claude selected, but no host Claude auth, ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN was available.'"),
             AgentKind::Codex if codex_auth_available => Some("codex --dangerously-bypass-approvals-and-sandbox"),
             AgentKind::Codex => Some("echo 'Codex selected, but no host Codex auth or OPENAI_API_KEY was available.'"),
         };
