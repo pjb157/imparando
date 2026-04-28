@@ -473,6 +473,7 @@ fn build_startup_script(
         "export no_proxy='localhost,127.0.0.1,::1'".to_string(),
         "export HOME='/root'".to_string(),
         "export CODEX_HOME='/root/.codex'".to_string(),
+        "export IS_SANDBOX='1'".to_string(),
         "export PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'".to_string(),
         "export CARGO_BUILD_JOBS='2'".to_string(),
         "export npm_config_jobs='2'".to_string(),
