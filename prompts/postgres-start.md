@@ -11,7 +11,7 @@ Rules:
 Basic checks:
 
 ```sh
-pg_isready -h 127.0.0.1 -p 5432
+pg_isready -h 127.0.0.1 -p 5432 -U postgres
 ps aux | grep postgres
 cat /proc/swaps
 ```
@@ -20,13 +20,32 @@ First recovery attempt:
 
 ```sh
 /usr/local/bin/start-postgres.sh
-pg_isready -h 127.0.0.1 -p 5432
+pg_isready -h 127.0.0.1 -p 5432 -U postgres
 ```
 
 If that fails, inspect the log:
 
 ```sh
 cat /var/log/postgresql/postgresql.log
+```
+
+If `/usr/local/bin/start-postgres.sh` fails with `Permission denied` while trying to run PostgreSQL binaries as the `postgres` user, check the root directory permissions:
+
+```sh
+stat -c '%a %U %G %n' /
+```
+
+If `/` is `700` or otherwise missing execute permission for non-root users, restore standard traversal permissions:
+
+```sh
+chmod 755 /
+```
+
+Then retry:
+
+```sh
+/usr/local/bin/start-postgres.sh
+pg_isready -h 127.0.0.1 -p 5432 -U postgres
 ```
 
 If there is no cluster yet, verify what PostgreSQL versions are installed:
@@ -45,7 +64,7 @@ Important constraints:
 
 If startup still fails after checking the log, report:
 
-- output of `pg_isready -h 127.0.0.1 -p 5432`
+- output of `pg_isready -h 127.0.0.1 -p 5432 -U postgres`
 - output of `ls /usr/lib/postgresql`
 - contents of `/var/log/postgresql/postgresql.log`
 

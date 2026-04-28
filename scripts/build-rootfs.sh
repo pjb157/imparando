@@ -217,6 +217,9 @@ PG_DATA="/var/lib/postgresql/$PG_VERSION/main"
 PG_BIN="/usr/lib/postgresql/$PG_VERSION/bin"
 RUN_AS_POSTGRES=(chroot --userspec=postgres:postgres /)
 
+# Ensure non-root users can traverse the filesystem root to reach
+# PostgreSQL binaries and shared libraries.
+chmod 755 /
 # Fix ownership (may be wrong after overlay copy)
 mkdir -p /var/run/postgresql /var/log/postgresql
 chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql /var/log/postgresql
