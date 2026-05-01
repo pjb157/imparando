@@ -138,6 +138,10 @@ impl OverlayManager {
             tokio::fs::write(&git_credential_helper, git_credential_helper_script()).await?;
             run("chmod", &["+x", git_credential_helper.to_str().unwrap()]).await?;
 
+            let replay_attach = mount_dir.join("usr/local/bin/imparando-tmux-attach");
+            tokio::fs::write(&replay_attach, replay_and_attach_script()).await?;
+            run("chmod", &["+x", replay_attach.to_str().unwrap()]).await?;
+
             let prompt_dir = mount_dir.join("root/.imparando/prompts");
             tokio::fs::create_dir_all(&prompt_dir).await?;
             for prompt in built_in_prompts() {
@@ -263,6 +267,19 @@ fn clone_url_for_repo(url: &str, github_token: Option<&str>) -> String {
         (Some(path), Some(_)) => format!("https://github.com/{path}"),
         _ => url.to_string(),
     }
+}
+
+fn replay_and_attach_script() -> &'static str {
+    // Replay the tmux pane's scrollback into the connecting client before
+    // attaching, so a reconnecting browser sees the history that ran while
+    // it was disconnected. -E -1 stops at the line just above the visible
+    // region, so tmux's own redraw on attach doesn't print duplicates.
+    r#"#!/bin/sh
+if command -v tmux >/dev/null 2>&1 && tmux has-session -t main 2>/dev/null; then
+  tmux capture-pane -p -e -S - -E -1 -t main:0.0 2>/dev/null | sed 's/$/\r/'
+fi
+exec tmux attach -t main
+"#
 }
 
 fn git_credential_helper_script() -> &'static str {
@@ -606,7 +623,7 @@ fn build_startup_script(
     }
 
     lines.push("  while true; do".to_string());
-    lines.push("    if ttyd -W tmux attach -t main; then".to_string());
+    lines.push("    if ttyd -W /usr/local/bin/imparando-tmux-attach; then".to_string());
     lines.push("      echo 'ttyd exited cleanly, restarting in 1s' > /dev/ttyS0".to_string());
     lines.push("    else".to_string());
     lines.push("      rc=$?".to_string());
